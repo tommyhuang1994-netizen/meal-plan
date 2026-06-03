@@ -1,0 +1,24 @@
+{
+  "name": "meal-plan",
+  "version": "1.0.0",
+  "description": "Meal plan ordering system for parents and admin",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "next": "^16.2.7",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}
