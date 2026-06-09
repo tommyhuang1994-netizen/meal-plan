@@ -7,35 +7,12 @@ const NEXT_MONTH_LABEL = NEXT_MONTH.toLocaleString('default', { month: 'long', y
 
 const HAS_ORDERED_NEXT_MONTH = false;
 
+// cutoffDate = 1st of the order month minus 7 days (e.g. June order → cutoff May 25)
 const MOCK_ORDERS = [
-  {
-    id: 'ORD-001',
-    childName: 'Ahmad Irfan',
-    month: 'April 2026',
-    schoolDays: 22,
-    status: 'delivered',
-  },
-  {
-    id: 'ORD-002',
-    childName: 'Ahmad Irfan',
-    month: 'May 2026',
-    schoolDays: 20,
-    status: 'delivered',
-  },
-  {
-    id: 'ORD-003',
-    childName: 'Nur Aisyah',
-    month: 'May 2026',
-    schoolDays: 20,
-    status: 'delivered',
-  },
-  {
-    id: 'ORD-004',
-    childName: 'Nur Aisyah',
-    month: 'June 2026',
-    schoolDays: 21,
-    status: 'confirmed',
-  },
+  { id: 'ORD-001', childName: 'Ahmad Irfan', month: 'April 2026', schoolDays: 22, status: 'delivered', cutoffDate: 'Mar 25, 2026' },
+  { id: 'ORD-002', childName: 'Ahmad Irfan', month: 'May 2026',   schoolDays: 20, status: 'delivered', cutoffDate: 'Apr 24, 2026' },
+  { id: 'ORD-003', childName: 'Nur Aisyah',  month: 'May 2026',   schoolDays: 20, status: 'delivered', cutoffDate: 'Apr 24, 2026' },
+  { id: 'ORD-004', childName: 'Nur Aisyah',  month: 'June 2026',  schoolDays: 21, status: 'confirmed', cutoffDate: 'May 25, 2026' },
 ];
 
 const STATUS_CONFIG = {
@@ -84,8 +61,8 @@ export default function ParentPage() {
             <Link
               href="/parent/order"
               style={styles.ctaButton}
-              onMouseEnter={e => e.currentTarget.style.background = '#B91C1C'}
-              onMouseLeave={e => e.currentTarget.style.background = '#DC2626'}
+              onMouseEnter={e => e.currentTarget.style.background = '#145A32'}
+              onMouseLeave={e => e.currentTarget.style.background = '#1B5E20'}
             >
               Place Order
             </Link>
@@ -108,6 +85,7 @@ export default function ParentPage() {
             <div style={styles.orderList}>
               {MOCK_ORDERS.map(order => {
                 const s = STATUS_CONFIG[order.status];
+                const isLocked = new Date() > new Date(order.cutoffDate);
                 return (
                   <div key={order.id} style={styles.orderCard}>
                     <div style={styles.orderTop}>
@@ -120,19 +98,34 @@ export default function ParentPage() {
                           {order.childName}
                         </p>
                       </div>
-                      <span style={{ ...styles.statusBadge, background: s.bg, color: s.color }}>
-                        <span style={{ ...styles.statusDot, background: s.dot }} />
-                        {s.label}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        <span style={{ ...styles.statusBadge, background: s.bg, color: s.color }}>
+                          <span style={{ ...styles.statusDot, background: s.dot }} />
+                          {s.label}
+                        </span>
+                        {isLocked && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+                            </svg>
+                            Locked
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={styles.orderMeta}>
                       <span style={styles.orderId}>{order.id}</span>
-                      <span style={styles.orderDate}>
-                        <svg width="12" height="12" fill="none" stroke="#9CA3AF" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 3 }}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                        {order.schoolDays} school days
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                        <span style={styles.orderDate}>
+                          <svg width="12" height="12" fill="none" stroke="#9CA3AF" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 3 }}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          {order.schoolDays} school days
+                        </span>
+                        <span style={{ fontSize: 11, color: isLocked ? '#9CA3AF' : '#F97316', fontWeight: 500 }}>
+                          {isLocked ? `Locked since ${order.cutoffDate}` : `Edit by ${order.cutoffDate}`}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -184,14 +177,14 @@ const styles = {
     gap: 24,
   },
   ctaBanner: {
-    background: 'linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)',
+    background: 'linear-gradient(135deg, #1B5E20 0%, #145A32 100%)',
     borderRadius: 14,
     padding: '20px 20px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 16,
-    boxShadow: '0 4px 16px rgba(220,38,38,0.25)',
+    boxShadow: '0 4px 16px rgba(27,94,32,0.25)',
   },
   ctaLeft: {
     display: 'flex',
@@ -228,7 +221,7 @@ const styles = {
     margin: '3px 0 0',
   },
   ctaButton: {
-    background: '#DC2626',
+    background: '#1B5E20',
     color: '#fff',
     border: '2px solid rgba(255,255,255,0.5)',
     borderRadius: 10,

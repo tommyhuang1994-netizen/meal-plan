@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── Zera Brand Tokens ── */
+:root {
+  --z-primary:      #1B5E20;
+  --z-primary-dark: #145A32;
+  --z-medium:       #2E7D32;
+  --z-tint:         #E8F5E9;
+  --z-tint-border:  #C8E6C9;
+  --z-gold:         #D97706;
+  --z-gold-tint:    #FFFBEB;
+  --z-olive:        #558B2F;
+  --z-olive-tint:   #F1F8E9;
+  --z-blue:         #1565C0;
+  --z-blue-tint:    #EFF6FF;
+  --z-text:         #1A3A1A;
+  --z-muted:        #6B7280;
+  --z-bg:           #F7FAF7;
+  --z-surface:      #FFFFFF;
+  --z-border:       #E5E7EB;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+html, body {
+  /* No accidental horizontal scrolling on narrow phones */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--z-bg);
+  color: var(--z-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Remove the grey tap-flash on iOS/Android for our custom-styled controls */
+button, a, [role="button"] { -webkit-tap-highlight-color: transparent; }
+
+button { font-family: inherit; }
+
+/* Default inputs to 16px so iOS Safari doesn't auto-zoom on focus.
+   (Inline styles ≥16px on specific inputs still win where set.) */
+input, select, textarea { font-family: inherit; font-size: 16px; }
+
+/* Bottom-sheet popup motion */
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

@@ -1,14 +1,23 @@
+import './globals.css';
+
 export const metadata = {
-  title: 'Meal Plan',
-  description: 'School meal ordering system',
+  title: 'Zera Meal Plan',
+  description: 'School meal ordering system — Zera International School',
+};
+
+// Mobile-first: render at device width (not desktop 980px) and extend under
+// notches/home-indicator. Pinch-zoom is intentionally left enabled (a11y).
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#1B5E20',
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: 'system-ui, sans-serif', background: '#f5f5f5' }}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
