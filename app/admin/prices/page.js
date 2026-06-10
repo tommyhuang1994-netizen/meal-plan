@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { CHEFS_PRICING, MENU_PRICING } from '../../../lib/pricingData';
+import { useT } from '../../../lib/i18n';
 
 function fmt(n) { return `RM ${Number(n).toFixed(2)}`; }
 function pct(cost, parent) {
@@ -20,6 +21,7 @@ const TYPE_COLORS = {
 
 export default function AdminPricesPage() {
   const router = useRouter();
+  const { t } = useT();
   useEffect(() => {
     if (sessionStorage.getItem('admin_auth') !== 'true') router.replace('/admin');
   }, []);
@@ -67,17 +69,17 @@ export default function AdminPricesPage() {
       <header style={S.header}>
         <Link href="/admin/dashboard" style={S.backLink}>
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          Admin
+          {t('common.admin')}
         </Link>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div>
-            <h1 style={S.headerTitle}>Price List</h1>
-            <p style={S.headerSub}>Vendor cost vs parent price · manage markup</p>
+            <h1 style={S.headerTitle}>{t('adminPrices.title')}</h1>
+            <p style={S.headerSub}>{t('adminPrices.subtitle')}</p>
           </div>
           {saved && (
             <span style={{ display:'flex', alignItems:'center', gap:5, background:'#DCFCE7', color:'#1B5E20', fontSize:13, fontWeight:600, padding:'6px 12px', borderRadius:20 }}>
               <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-              Saved
+              {t('common.saved')}
             </span>
           )}
         </div>
@@ -88,9 +90,9 @@ export default function AdminPricesPage() {
         {/* Summary cards */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
           {[
-            { label:'Total Vendor Cost', value: fmt(totalMenuCost),    sub:'sum of cost prices', color:'#1565C0' },
-            { label:'Total Parent Price',value: fmt(totalMenuRevenue), sub:'sum of parent prices', color:'#1B5E20' },
-            { label:'Total Markup',      value: fmt(totalMarkup),      sub:`avg ${((totalMarkup/totalMenuCost)*100).toFixed(0)}% margin`, color:'#D97706' },
+            { label:t('prices.totalVendorCost'), value: fmt(totalMenuCost),    sub:t('prices.sumCost'),   color:'#1565C0' },
+            { label:t('prices.totalParentPrice'),value: fmt(totalMenuRevenue), sub:t('prices.sumParent'), color:'#1B5E20' },
+            { label:t('prices.totalMarkup'),     value: fmt(totalMarkup),      sub:t('prices.avgMargin', { x: ((totalMarkup/totalMenuCost)*100).toFixed(0) }), color:'#D97706' },
           ].map(c => (
             <div key={c.label} style={{ background:'#fff', borderRadius:12, padding:'14px 12px', border:'1px solid #F3F4F6', textAlign:'center' }}>
               <p style={{ fontSize:10, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 6px' }}>{c.label}</p>
@@ -102,7 +104,7 @@ export default function AdminPricesPage() {
 
         {/* Tabs */}
         <div style={{ display:'flex', gap:8 }}>
-          {[['menu', 'À La Carte Menu'], ['chefs', "Chef's Choice Plans"]].map(([id, label]) => (
+          {[['menu', t('prices.tabMenu')], ['chefs', t('prices.tabChefs')]].map(([id, label]) => (
             <button key={id} onClick={() => { setTab(id); setEdit(null); }}
               style={{ flex:1, padding:'10px 0', borderRadius:10, border:'none', cursor:'pointer', fontWeight:700, fontSize:14,
                 background: activeTab === id ? '#1B5E20' : '#fff',
@@ -116,15 +118,15 @@ export default function AdminPricesPage() {
 
         {/* Legend */}
         <div style={{ display:'flex', gap:16, fontSize:12, color:'#6B7280', alignItems:'center' }}>
-          <span>Click <strong>Edit</strong> on any row to update prices.</span>
+          <span>{t('prices.clickEdit', { edit: t('common.edit') })}</span>
           <span style={{ display:'flex', alignItems:'center', gap:4 }}>
-            <span style={{ width:10, height:10, borderRadius:'50%', background:'#DCFCE7', border:'1px solid #86EFAC', display:'inline-block' }} /> &gt;25% markup
+            <span style={{ width:10, height:10, borderRadius:'50%', background:'#DCFCE7', border:'1px solid #86EFAC', display:'inline-block' }} /> {t('prices.markupOver25')}
           </span>
           <span style={{ display:'flex', alignItems:'center', gap:4 }}>
-            <span style={{ width:10, height:10, borderRadius:'50%', background:'#FEF9C3', border:'1px solid #FDE047', display:'inline-block' }} /> 10–25%
+            <span style={{ width:10, height:10, borderRadius:'50%', background:'#FEF9C3', border:'1px solid #FDE047', display:'inline-block' }} /> {t('prices.markup10to25')}
           </span>
           <span style={{ display:'flex', alignItems:'center', gap:4 }}>
-            <span style={{ width:10, height:10, borderRadius:'50%', background:'#FEE2E2', border:'1px solid #FCA5A5', display:'inline-block' }} /> &lt;10%
+            <span style={{ width:10, height:10, borderRadius:'50%', background:'#FEE2E2', border:'1px solid #FCA5A5', display:'inline-block' }} /> {t('prices.markupUnder10')}
           </span>
         </div>
 
@@ -134,10 +136,10 @@ export default function AdminPricesPage() {
             <table style={S.table}>
               <thead>
                 <tr style={{ background:'#F9FAFB' }}>
-                  <th style={S.th}>Plan</th>
-                  <th style={{ ...S.th, textAlign:'right' }}>Vendor Cost</th>
-                  <th style={{ ...S.th, textAlign:'right' }}>Parent Price</th>
-                  <th style={{ ...S.th, textAlign:'right' }}>Markup</th>
+                  <th style={S.th}>{t('prices.colPlan')}</th>
+                  <th style={{ ...S.th, textAlign:'right' }}>{t('prices.colVendorCost')}</th>
+                  <th style={{ ...S.th, textAlign:'right' }}>{t('prices.colParentPrice')}</th>
+                  <th style={{ ...S.th, textAlign:'right' }}>{t('prices.colMarkup')}</th>
                   <th style={{ ...S.th, textAlign:'center' }}>%</th>
                   <th style={{ ...S.th, width:60 }}></th>
                 </tr>
@@ -174,7 +176,7 @@ export default function AdminPricesPage() {
                           </td>
                           <td style={S.td}>
                             <div style={{ display:'flex', gap:4 }}>
-                              <button onClick={saveEdit} style={S.saveBtn}>Save</button>
+                              <button onClick={saveEdit} style={S.saveBtn}>{t('common.save')}</button>
                               <button onClick={() => setEdit(null)} style={S.cancelBtn}>✕</button>
                             </div>
                           </td>
@@ -186,7 +188,7 @@ export default function AdminPricesPage() {
                           <td style={{ ...S.td, textAlign:'right', color:'#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>+{fmt(mu)}</td>
                           <td style={{ ...S.td, textAlign:'center' }}><MarkupBadge value={mp} /></td>
                           <td style={S.td}>
-                            <button onClick={() => startEdit('chefs', i, row)} style={S.editBtn}>Edit</button>
+                            <button onClick={() => startEdit('chefs', i, row)} style={S.editBtn}>{t('common.edit')}</button>
                           </td>
                         </>
                       )}
@@ -207,10 +209,10 @@ export default function AdminPricesPage() {
             <div key={type} style={S.tableCard}>
               <div style={{ padding:'12px 16px 10px', borderBottom:'1px solid #F3F4F6', display:'flex', alignItems:'center', gap:8 }}>
                 <span style={{ width:9, height:9, borderRadius:'50%', background:col.text, display:'inline-block' }} />
-                <h3 style={{ margin:0, fontSize:14, fontWeight:700, color:'#111827' }}>{type}</h3>
-                <span style={{ fontSize:12, color:'#9CA3AF' }}>{items.length} items</span>
+                <h3 style={{ margin:0, fontSize:14, fontWeight:700, color:'#111827' }}>{t('meal.' + type.toLowerCase())}</h3>
+                <span style={{ fontSize:12, color:'#9CA3AF' }}>{t('adminMenu.items', { n: items.length })}</span>
                 <span style={{ marginLeft:'auto', fontSize:12, color:'#6B7280' }}>
-                  Avg markup: <strong style={{ color:'#1B5E20' }}>
+                  {t('prices.avgMarkup')} <strong style={{ color:'#1B5E20' }}>
                     {(items.reduce((s,r)=>s+parseFloat(pct(r.vendorCost,r.parentPrice)),0)/items.length).toFixed(0)}%
                   </strong>
                 </span>
@@ -218,7 +220,7 @@ export default function AdminPricesPage() {
               <table style={S.table}>
                 <thead>
                   <tr style={{ background:'#F9FAFB' }}>
-                    <th style={S.th}>Item</th>
+                    <th style={S.th}>{t('prices.colItem')}</th>
                     <th style={{ ...S.th, textAlign:'right' }}>Vendor Cost</th>
                     <th style={{ ...S.th, textAlign:'right' }}>Parent Price</th>
                     <th style={{ ...S.th, textAlign:'right' }}>Markup</th>
@@ -256,7 +258,7 @@ export default function AdminPricesPage() {
                             </td>
                             <td style={S.td}>
                               <div style={{ display:'flex', gap:4 }}>
-                                <button onClick={saveEdit} style={S.saveBtn}>Save</button>
+                                <button onClick={saveEdit} style={S.saveBtn}>{t('common.save')}</button>
                                 <button onClick={() => setEdit(null)} style={S.cancelBtn}>✕</button>
                               </div>
                             </td>
@@ -268,7 +270,7 @@ export default function AdminPricesPage() {
                             <td style={{ ...S.td, textAlign:'right', color:'#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>+{fmt(mu)}</td>
                             <td style={{ ...S.td, textAlign:'center' }}><MarkupBadge value={mp} /></td>
                             <td style={S.td}>
-                              <button onClick={() => startEdit('menu', globalIdx, row)} style={S.editBtn}>Edit</button>
+                              <button onClick={() => startEdit('menu', globalIdx, row)} style={S.editBtn}>{t('common.edit')}</button>
                             </td>
                           </>
                         )}

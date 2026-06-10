@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { useT, fmtMonthYear } from '../../lib/i18n';
 
 const NEXT_MONTH = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
-const NEXT_MONTH_LABEL = NEXT_MONTH.toLocaleString('default', { month: 'long', year: 'numeric' });
 
 const HAS_ORDERED_NEXT_MONTH = false;
 
@@ -16,14 +16,16 @@ const MOCK_ORDERS = [
 ];
 
 const STATUS_CONFIG = {
-  pending:   { label: 'Pending',   bg: '#FEF9C3', color: '#854D0E', dot: '#CA8A04' },
-  confirmed: { label: 'Confirmed', bg: '#DCFCE7', color: '#14532D', dot: '#16A34A' },
-  delivered: { label: 'Delivered', bg: '#F0F9FF', color: '#0C4A6E', dot: '#0284C7' },
+  pending:   { bg: '#FEF9C3', color: '#854D0E', dot: '#CA8A04' },
+  confirmed: { bg: '#DCFCE7', color: '#14532D', dot: '#16A34A' },
+  delivered: { bg: '#F0F9FF', color: '#0C4A6E', dot: '#0284C7' },
 };
 
 
 export default function ParentPage() {
+  const { t, lang } = useT();
   const showCTA = !HAS_ORDERED_NEXT_MONTH;
+  const NEXT_MONTH_LABEL = fmtMonthYear(lang, NEXT_MONTH);
 
   return (
     <main style={{ background: '#FAFAFA', minHeight: '100dvh' }}>
@@ -33,11 +35,11 @@ export default function ParentPage() {
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
-          Back
+          {t('common.back')}
         </Link>
         <div>
-          <h1 style={styles.headerTitle}>My Meal Orders</h1>
-          <p style={styles.headerSub}>Manage meal orders for your children</p>
+          <h1 style={styles.headerTitle}>{t('parent.title')}</h1>
+          <p style={styles.headerSub}>{t('parent.subtitle')}</p>
         </div>
       </header>
 
@@ -53,9 +55,9 @@ export default function ParentPage() {
                 </svg>
               </div>
               <div>
-                <p style={styles.ctaLabel}>Order for</p>
+                <p style={styles.ctaLabel}>{t('parent.orderFor')}</p>
                 <p style={styles.ctaMonth}>{NEXT_MONTH_LABEL}</p>
-                <p style={styles.ctaHint}>Meal plan not yet submitted for next month</p>
+                <p style={styles.ctaHint}>{t('parent.notSubmitted')}</p>
               </div>
             </div>
             <Link
@@ -64,22 +66,22 @@ export default function ParentPage() {
               onMouseEnter={e => e.currentTarget.style.background = '#145A32'}
               onMouseLeave={e => e.currentTarget.style.background = '#1B5E20'}
             >
-              Place Order
+              {t('parent.placeOrder')}
             </Link>
           </div>
         )}
 
         {/* Order History */}
         <section>
-          <h2 style={styles.sectionTitle}>Order History</h2>
+          <h2 style={styles.sectionTitle}>{t('parent.history')}</h2>
 
           {MOCK_ORDERS.length === 0 ? (
             <div style={styles.emptyState}>
               <svg width="40" height="40" fill="none" stroke="#D1D5DB" strokeWidth="1.5" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
-              <p style={{ marginTop: 12, color: '#6B7280', fontSize: 15 }}>No orders yet</p>
-              <p style={{ color: '#9CA3AF', fontSize: 13, marginTop: 4 }}>Place your first order above</p>
+              <p style={{ marginTop: 12, color: '#6B7280', fontSize: 15 }}>{t('parent.noOrders')}</p>
+              <p style={{ color: '#9CA3AF', fontSize: 13, marginTop: 4 }}>{t('parent.placeFirst')}</p>
             </div>
           ) : (
             <div style={styles.orderList}>
@@ -101,14 +103,14 @@ export default function ParentPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                         <span style={{ ...styles.statusBadge, background: s.bg, color: s.color }}>
                           <span style={{ ...styles.statusDot, background: s.dot }} />
-                          {s.label}
+                          {t('status.' + order.status)}
                         </span>
                         {isLocked && (
                           <span style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 3 }}>
                             <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                               <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
                             </svg>
-                            Locked
+                            {t('parent.locked')}
                           </span>
                         )}
                       </div>
@@ -120,10 +122,10 @@ export default function ParentPage() {
                           <svg width="12" height="12" fill="none" stroke="#9CA3AF" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 3 }}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
-                          {order.schoolDays} school days
+                          {t('parent.schoolDays', { n: order.schoolDays })}
                         </span>
                         <span style={{ fontSize: 11, color: isLocked ? '#9CA3AF' : '#F97316', fontWeight: 500 }}>
-                          {isLocked ? `Locked since ${order.cutoffDate}` : `Edit by ${order.cutoffDate}`}
+                          {isLocked ? t('parent.lockedSince', { date: order.cutoffDate }) : t('parent.editBy', { date: order.cutoffDate })}
                         </span>
                       </div>
                     </div>

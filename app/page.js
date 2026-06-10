@@ -1,7 +1,11 @@
+'use client';
+
 import Link from 'next/link';
 import Image from 'next/image';
+import { useT } from '../lib/i18n';
 
 export default function Home() {
+  const { t } = useT();
   return (
     <main style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh', overflow: 'hidden', background: '#fff' }}>
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '45%', pointerEvents: 'none' }}>
@@ -10,13 +14,13 @@ export default function Home() {
       <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 32, padding: '0 24px', width: '100%', maxWidth: 360 }}>
         <Image src="/logo.png" alt="Zera International School" width={300} height={84} style={{ objectFit: 'contain', maxWidth: '85vw' }} priority />
         <div style={{ textAlign: 'center' }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1A3A1A', margin: '0 0 6px' }}>Meal Plan Portal</h1>
-          <p style={{ color: '#4B7A4B', fontSize: 14, margin: 0 }}>Select your role to continue</p>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1A3A1A', margin: '0 0 6px' }}>{t('home.portal')}</h1>
+          <p style={{ color: '#4B7A4B', fontSize: 14, margin: 0 }}>{t('home.selectRole')}</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
-          <RoleBtn href="/parent" label="I'm a Parent" icon={ParentIcon} bg="#1B5E20" />
-          <RoleBtn href="/admin"  label="I'm an Admin" icon={AdminIcon}  bg="#145A32" />
-          <RoleBtn href="/vendor" label="I'm a Vendor" icon={VendorIcon} bg="#D97706" />
+          <RoleBtn href="/parent" label={t('home.parent')} icon={ParentIcon} bg="#1B5E20" />
+          <RoleBtn href="/admin"  label={t('home.admin')}  icon={AdminIcon}  bg="#145A32" />
+          <RoleBtn href="/vendor" label={t('home.vendor')} icon={VendorIcon} bg="#D97706" />
         </div>
       </div>
     </main>

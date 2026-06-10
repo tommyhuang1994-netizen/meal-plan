@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ORDERS, DEPARTMENTS, DAY_LABELS, ALLERGY_LABELS } from '../../../lib/mockOrders';
+import { useT, fmtFullDate, weekdayFull } from '../../../lib/i18n';
 
 // ── June 2026 calendar helpers ────────────────────────────────────────────────
 
@@ -57,6 +58,7 @@ const DEPT_COLORS = {
 
 export default function VendorDashboard() {
   const router = useRouter();
+  const { t, lang } = useT();
   const [selectedDate, setSelectedDate] = useState(null); // number 1-30
   const [deptFilter, setDeptFilter]     = useState('All');
 
@@ -80,11 +82,11 @@ export default function VendorDashboard() {
     <main style={{ background: '#FAFAFA', minHeight: '100dvh' }}>
 
       {/* Header */}
-      <header style={{ background: '#1B5E20', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <header style={{ background: '#1B5E20', padding: '14px 20px', paddingRight: 108, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Image src="/logo.png" alt="Zera" width={140} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
         <button onClick={() => router.push('/vendor')}
           style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          Sign Out
+          {t('common.signOut')}
         </button>
       </header>
 
@@ -93,9 +95,9 @@ export default function VendorDashboard() {
         {/* Calendar */}
         <div style={{ background: '#fff', borderRadius: 14, padding: '18px 20px', border: '1px solid #F3F4F6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>June 2026</h2>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{t('common.monthJune')}</h2>
             {selectedDate && (
-              <span style={{ fontSize: 13, color: '#6B7280' }}>{dateLabel(selectedDate)}</span>
+              <span style={{ fontSize: 13, color: '#6B7280' }}>{fmtFullDate(lang, selectedDate)}</span>
             )}
           </div>
 
@@ -103,7 +105,7 @@ export default function VendorDashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 4 }}>
             {DAYS_GRID.map(d => (
               <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: d === 'Sat' || d === 'Sun' ? '#D1D5DB' : '#6B7280', padding: '4px 0' }}>
-                {d}
+                {t('wd.' + d)}
               </div>
             ))}
           </div>
@@ -163,9 +165,9 @@ export default function VendorDashboard() {
           {/* Legend */}
           <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11, color: '#9CA3AF' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16A34A', display: 'inline-block' }} /> Has orders
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16A34A', display: 'inline-block' }} /> {t('vendor.hasOrders')}
             </span>
-            <span>🔒 Past cutoff (7-day lock)</span>
+            <span>{t('vendor.pastCutoff')}</span>
           </div>
         </div>
 
@@ -175,8 +177,8 @@ export default function VendorDashboard() {
             <svg width="36" height="36" fill="none" stroke="#D1D5DB" strokeWidth="1.5" viewBox="0 0 24 24" style={{ margin: '0 auto 12px', display: 'block' }}>
               <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
-            <p style={{ fontWeight: 600, fontSize: 14 }}>Select a date</p>
-            <p style={{ fontSize: 13, marginTop: 4 }}>Click any school day on the calendar to view orders</p>
+            <p style={{ fontWeight: 600, fontSize: 14 }}>{t('vendor.selectDate')}</p>
+            <p style={{ fontSize: 13, marginTop: 4 }}>{t('vendor.clickDay')}</p>
           </div>
         ) : (
           <>
@@ -188,7 +190,7 @@ export default function VendorDashboard() {
                     style={{ padding: '6px 14px', borderRadius: 20, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
                       background: deptFilter === d ? '#1B5E20' : '#F3F4F6',
                       color: deptFilter === d ? '#fff' : '#374151' }}>
-                    {d}
+                    {d === 'All' ? t('common.all') : d}
                   </button>
                 ))}
               </div>
@@ -197,7 +199,7 @@ export default function VendorDashboard() {
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z"/>
                 </svg>
-                Print {dateLabel(selectedDate).split(' - ')[0]}
+                {t('vendor.print', { day: weekdayFull(lang, selectedDate) })}
               </button>
             </div>
 
@@ -205,22 +207,22 @@ export default function VendorDashboard() {
             {isCutoffPassed(selectedDate) && (
               <div style={{ background: '#FEF9C3', border: '1px solid #FDE047', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#854D0E', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                <span><strong>Order locked</strong> — cutoff passed 7 days before this date. Only admin can modify orders.</span>
+                <span><strong>{t('vendor.orderLockedTitle')}</strong>{t('vendor.orderLockedBody')}</span>
               </div>
             )}
 
             {/* Order tables */}
             <h3 style={{ fontSize: 15, fontWeight: 700, color: '#111827', margin: 0 }}>
-              {dateLabel(selectedDate)}
-              <span style={{ fontSize: 13, fontWeight: 500, color: '#6B7280', marginLeft: 8 }}>· {filtered.length} orders{deptFilter !== 'All' ? ` · ${deptFilter}` : ''}</span>
+              {fmtFullDate(lang, selectedDate)}
+              <span style={{ fontSize: 13, fontWeight: 500, color: '#6B7280', marginLeft: 8 }}>· {t('vendor.orders', { n: filtered.length })}{deptFilter !== 'All' ? ` · ${deptFilter}` : ''}</span>
             </h3>
 
             {isFriday ? (
-              <OrderTable title="Brunch" orders={brOrders} mealKey="brunch" accentColor="#7E22CE" />
+              <OrderTable title={t('meal.brunch')} orders={brOrders} mealKey="brunch" accentColor="#7E22CE" />
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <OrderTable title="Breakfast" orders={bfOrders} mealKey="breakfast" accentColor="#F97316" />
-                <OrderTable title="Lunch"     orders={lnOrders} mealKey="lunch"     accentColor="#2563EB" />
+                <OrderTable title={t('meal.breakfast')} orders={bfOrders} mealKey="breakfast" accentColor="#F97316" />
+                <OrderTable title={t('meal.lunch')}     orders={lnOrders} mealKey="lunch"     accentColor="#2563EB" />
               </div>
             )}
           </>
@@ -233,9 +235,10 @@ export default function VendorDashboard() {
 // ── OrderTable ────────────────────────────────────────────────────────────────
 
 function OrderTable({ title, orders, mealKey, accentColor }) {
+  const { t, lang } = useT();
   if (orders.length === 0) return (
     <div style={{ background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #F3F4F6', color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>
-      No {title.toLowerCase()} orders
+      {t('vendor.noOrders', { meal: title })}
     </div>
   );
   return (
@@ -247,7 +250,7 @@ function OrderTable({ title, orders, mealKey, accentColor }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: '#F9FAFB' }}>
-            <th style={thS}>Name</th><th style={thS}>Class</th><th style={thS}>Meal</th>
+            <th style={thS}>{t('vendor.colName')}</th><th style={thS}>{t('vendor.colClass')}</th><th style={thS}>{t('vendor.colMeal')}</th>
           </tr>
         </thead>
         <tbody>
@@ -265,7 +268,7 @@ function OrderTable({ title, orders, mealKey, accentColor }) {
                         if (!info) return null;
                         return (
                           <span key={a} style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:10, background:info.bg, color:info.color, border:`1px solid ${info.color}33`, whiteSpace:'nowrap' }}>
-                            ⚠ {info.en} {info.zh}
+                            ⚠ {lang === 'zh' ? info.zh : info.en}
                           </span>
                         );
                       })}

@@ -62,6 +62,14 @@ The API routes under `app/api/` (`auth`, `menu`, `orders`) are scaffolded but al
 - **Friday brunch**: on Fridays the menu is brunch-only. `chefs_both` bundles it; `chefs_bf`/`chefs_ln` make it optional; custom handles it inline in the calendar.
 - State is per-child (`KIDS = ['Ahmad Irfan', 'Nur Aisyah']`), pricing is computed in `calcChild()`.
 
+### Internationalization (EN / ZH)
+
+- `lib/i18n.js` is the whole i18n layer — no external library. It exports a `LanguageProvider` (wraps `children` in `app/layout.js` and also renders the global floating `EN / 中文` toggle), the `useT()` hook (`{ lang, setLang, t }`), and date helpers `fmtFullDate` / `weekdayFull` / `fmtMonthYear` (June-2026-aware).
+- `t(key, vars)` looks up a flat dotted-key dictionary (`STRINGS.en` / `STRINGS.zh`), falls back to English then to the raw key, and interpolates `{var}` placeholders.
+- Language is persisted to `localStorage('lang')`. The provider starts as `'en'` on the server **and** first client render (then applies the saved value in `useEffect`) to avoid a hydration mismatch.
+- **Scope: UI labels only.** Dish names (`lib/menuData.js`), class-group names (Cambridge/Homeschool/Plus), holiday names, and the `TERM_BREAK_NOTICE` text in `lib/schoolCalendar.js` are intentionally left in English. The vendor **print route** (`app/vendor/print/[day]/route.js`) is also still English — it's server-rendered HTML opened in a new tab with no access to the client language context.
+- To localize a new string: add the key to both `en` and `zh` in `lib/i18n.js`, then call `t('your.key')` in the (client) component.
+
 ### Vendor dashboard
 
 `app/vendor/dashboard/page.js` reads from `lib/mockOrders.js`. Orders are keyed by weekday (`Mon`–`Fri`), not by specific date — all Mondays in June show the same mock data. The print route is `app/vendor/print/[day]/route.js`.

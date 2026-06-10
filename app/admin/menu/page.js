@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { MENU_BY_DATE, getSchoolDays, isFridayDate, dateKey, dayLabel, ordinal } from '../../../lib/menuData';
+import { MENU_BY_DATE, getSchoolDays, isFridayDate, dateKey } from '../../../lib/menuData';
+import { useT, fmtFullDate } from '../../../lib/i18n';
 
 let nextId = 9000;
 function genId() { return `new-${nextId++}`; }
@@ -22,6 +23,7 @@ function calendarCells() {
 
 export default function AdminMenuPage() {
   const router = useRouter();
+  const { t, lang } = useT();
   useEffect(() => {
     if (sessionStorage.getItem('admin_auth') !== 'true') router.replace('/admin');
   }, []);
@@ -39,9 +41,9 @@ export default function AdminMenuPage() {
   const dayMenu  = key ? (menu[key] || {}) : null;
   const isFri    = activeDate ? isFridayDate(activeDate) : false;
   const sections = !dayMenu ? [] : isFri
-    ? [{ key: 'brunch',    label: 'Brunch',    color: '#558B2F' }]
-    : [{ key: 'breakfast', label: 'Breakfast', color: '#D97706' },
-       { key: 'lunch',     label: 'Lunch',     color: '#2563EB' }];
+    ? [{ key: 'brunch',    label: t('meal.brunch'),    color: '#558B2F' }]
+    : [{ key: 'breakfast', label: t('meal.breakfast'), color: '#D97706' },
+       { key: 'lunch',     label: t('meal.lunch'),     color: '#2563EB' }];
 
   function startEdit(item) {
     setEdit(item.id);
@@ -68,13 +70,13 @@ export default function AdminMenuPage() {
   }
 
   function addItem(section) {
-    const newItem = { id: genId(), name: 'New Item', desc: 'Description', price: 0 };
+    const newItem = { id: genId(), name: t('adminMenu.newItem'), desc: t('adminMenu.descDefault'), price: 0 };
     setMenu(prev => ({
       ...prev,
       [key]: { ...prev[key], [section]: [...(prev[key][section] || []), newItem] },
     }));
     setEdit(newItem.id);
-    setDraft({ name: 'New Item', desc: 'Description', price: '0' });
+    setDraft({ name: t('adminMenu.newItem'), desc: t('adminMenu.descDefault'), price: '0' });
   }
 
   function flash() { setSaved(true); setTimeout(() => setSaved(false), 2000); }
@@ -84,17 +86,17 @@ export default function AdminMenuPage() {
       <header style={S.header}>
         <Link href="/admin/dashboard" style={S.backLink}>
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          Admin
+          {t('common.admin')}
         </Link>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 style={S.headerTitle}>Manage Menu</h1>
-            <p style={S.headerSub}>Set meals and prices per date · June 2026</p>
+            <h1 style={S.headerTitle}>{t('adminMenu.title')}</h1>
+            <p style={S.headerSub}>{t('adminMenu.subtitle')}</p>
           </div>
           {saved && (
             <span style={{ display:'flex', alignItems:'center', gap:5, background:'#DCFCE7', color:'#1B5E20', fontSize:13, fontWeight:600, padding:'6px 12px', borderRadius:20 }}>
               <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-              Saved
+              {t('common.saved')}
             </span>
           )}
         </div>
@@ -104,11 +106,11 @@ export default function AdminMenuPage() {
 
         {/* Calendar */}
         <div style={{ background:'#fff', borderRadius:14, padding:'18px 20px', border:'1px solid #F3F4F6' }}>
-          <h2 style={{ fontSize:15, fontWeight:700, color:'#111827', marginBottom:14 }}>June 2026 — select a date to edit its menu</h2>
+          <h2 style={{ fontSize:15, fontWeight:700, color:'#111827', marginBottom:14 }}>{t('adminMenu.selectPrompt')}</h2>
 
           <div style={{ display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:4, marginBottom:4 }}>
             {GRID_HEADERS.map(d => (
-              <div key={d} style={{ textAlign:'center', fontSize:11, fontWeight:700, color: d==='Sat'||d==='Sun' ? '#D1D5DB' : '#6B7280', padding:'3px 0' }}>{d}</div>
+              <div key={d} style={{ textAlign:'center', fontSize:11, fontWeight:700, color: d==='Sat'||d==='Sun' ? '#D1D5DB' : '#6B7280', padding:'3px 0' }}>{t('wd.' + d)}</div>
             ))}
           </div>
 
@@ -141,8 +143,8 @@ export default function AdminMenuPage() {
             })}
           </div>
           <div style={{ display:'flex', gap:14, marginTop:10, fontSize:11, color:'#9CA3AF' }}>
-            <span style={{ display:'flex', alignItems:'center', gap:4 }}><span style={{ width:7, height:7, borderRadius:'50%', background:'#1B5E20', display:'inline-block' }} /> Mon–Thu</span>
-            <span style={{ display:'flex', alignItems:'center', gap:4 }}><span style={{ width:7, height:7, borderRadius:'50%', background:'#558B2F', display:'inline-block' }} /> Friday (Brunch)</span>
+            <span style={{ display:'flex', alignItems:'center', gap:4 }}><span style={{ width:7, height:7, borderRadius:'50%', background:'#1B5E20', display:'inline-block' }} /> {t('legend.monThu')}</span>
+            <span style={{ display:'flex', alignItems:'center', gap:4 }}><span style={{ width:7, height:7, borderRadius:'50%', background:'#558B2F', display:'inline-block' }} /> {t('legend.friBrunch')}</span>
           </div>
         </div>
 
@@ -152,14 +154,14 @@ export default function AdminMenuPage() {
             <svg width="34" height="34" fill="none" stroke="#D1D5DB" strokeWidth="1.5" viewBox="0 0 24 24" style={{ margin:'0 auto 10px', display:'block' }}>
               <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
-            <p style={{ fontWeight:600, fontSize:14 }}>Select a school day above</p>
-            <p style={{ fontSize:13, marginTop:4 }}>Then add or edit the menu items for that date</p>
+            <p style={{ fontWeight:600, fontSize:14 }}>{t('adminMenu.selectSchoolDay')}</p>
+            <p style={{ fontSize:13, marginTop:4 }}>{t('adminMenu.thenEdit')}</p>
           </div>
         ) : (
           <div style={{ background:'#fff', borderRadius:12, padding:'16px', border:'1px solid #F3F4F6' }}>
             <h2 style={{ fontSize:15, fontWeight:700, color:'#111827', margin:'0 0 16px' }}>
-              {dayLabel(activeDate)}, {ordinal(activeDate)} June 2026
-              {isFri && <span style={{ marginLeft:8, fontSize:12, background:'#F3E8FF', color:'#7E22CE', padding:'2px 8px', borderRadius:12, fontWeight:600 }}>Brunch Only</span>}
+              {fmtFullDate(lang, activeDate)}
+              {isFri && <span style={{ marginLeft:8, fontSize:12, background:'#F3E8FF', color:'#7E22CE', padding:'2px 8px', borderRadius:12, fontWeight:600 }}>{t('adminMenu.brunchOnly')}</span>}
             </h2>
 
             {sections.map(({ key: section, label, color }) => (
@@ -168,11 +170,11 @@ export default function AdminMenuPage() {
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                     <span style={{ width:9, height:9, borderRadius:'50%', background:color, display:'inline-block' }} />
                     <span style={{ fontSize:14, fontWeight:700, color:'#111827' }}>{label}</span>
-                    <span style={{ fontSize:12, color:'#9CA3AF' }}>{dayMenu?.[section]?.length ?? 0} items</span>
+                    <span style={{ fontSize:12, color:'#9CA3AF' }}>{t('adminMenu.items', { n: dayMenu?.[section]?.length ?? 0 })}</span>
                   </div>
                   <button onClick={() => addItem(section)} style={{ ...S.addBtn, borderColor:color, color }}>
                     <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                    Add
+                    {t('common.add')}
                   </button>
                 </div>
 
@@ -185,22 +187,22 @@ export default function AdminMenuPage() {
                           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                             <div style={{ display:'flex', gap:8 }}>
                               <div style={{ flex:1 }}>
-                                <label style={S.lbl}>Item name</label>
+                                <label style={S.lbl}>{t('adminMenu.itemName')}</label>
                                 <input value={draft.name} onChange={e => setDraft(d => ({ ...d, name:e.target.value }))} style={S.inp} />
                               </div>
                               <div style={{ width:90 }}>
-                                <label style={S.lbl}>Price (RM)</label>
+                                <label style={S.lbl}>{t('adminMenu.priceRM')}</label>
                                 <input type="number" step="0.50" min="0" value={draft.price}
                                   onChange={e => setDraft(d => ({ ...d, price:e.target.value }))} style={{ ...S.inp, textAlign:'right' }} />
                               </div>
                             </div>
                             <div>
-                              <label style={S.lbl}>Description</label>
-                              <input value={draft.desc} onChange={e => setDraft(d => ({ ...d, desc:e.target.value }))} style={S.inp} placeholder="Brief description" />
+                              <label style={S.lbl}>{t('adminMenu.description')}</label>
+                              <input value={draft.desc} onChange={e => setDraft(d => ({ ...d, desc:e.target.value }))} style={S.inp} placeholder={t('adminMenu.briefDesc')} />
                             </div>
                             <div style={{ display:'flex', gap:8 }}>
-                              <button onClick={() => saveEdit(section, item.id)} style={{ ...S.saveBtn, background:color }}>Save</button>
-                              <button onClick={() => setEdit(null)} style={S.cancelBtn}>Cancel</button>
+                              <button onClick={() => saveEdit(section, item.id)} style={{ ...S.saveBtn, background:color }}>{t('common.save')}</button>
+                              <button onClick={() => setEdit(null)} style={S.cancelBtn}>{t('common.cancel')}</button>
                             </div>
                           </div>
                         ) : (
@@ -210,10 +212,10 @@ export default function AdminMenuPage() {
                               <p style={{ margin:'2px 0 0', fontSize:12, color:'#9CA3AF' }}>{item.desc}</p>
                             </div>
                             <span style={{ fontSize:14, fontWeight:700, color:'#374151', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap' }}>{fmt(item.price)}</span>
-                            <button onClick={() => startEdit(item)} style={S.iconBtn} title="Edit">
+                            <button onClick={() => startEdit(item)} style={S.iconBtn} title={t('common.edit')}>
                               <svg width="15" height="15" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                             </button>
-                            <button onClick={() => deleteItem(section, item.id)} style={S.iconBtn} title="Delete">
+                            <button onClick={() => deleteItem(section, item.id)} style={S.iconBtn} title={t('common.delete')}>
                               <svg width="15" height="15" fill="none" stroke="#DC2626" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
@@ -222,7 +224,7 @@ export default function AdminMenuPage() {
                     );
                   })}
                   {(dayMenu?.[section] || []).length === 0 && (
-                    <div style={{ padding:'16px 0', textAlign:'center', color:'#9CA3AF', fontSize:13 }}>No items yet.</div>
+                    <div style={{ padding:'16px 0', textAlign:'center', color:'#9CA3AF', fontSize:13 }}>{t('adminMenu.noItems')}</div>
                   )}
                 </div>
               </div>

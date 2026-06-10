@@ -1,4 +1,5 @@
 import './globals.css';
+import { LanguageProvider } from '../lib/i18n';
 
 export const metadata = {
   title: 'Zera Meal Plan',
@@ -17,7 +18,9 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <LanguageProvider>{children}</LanguageProvider>
+      </body>
     </html>
   );
 }

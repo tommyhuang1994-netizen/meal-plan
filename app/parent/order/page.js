@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { MENU_BY_DATE, isFridayDate, dateKey, dayLabel, ordinal } from '../../../lib/menuData';
+import { MENU_BY_DATE, isFridayDate, dateKey } from '../../../lib/menuData';
 import { CLASS_GROUPS, getAvailableDays, isDateAvailable, getHolidayInfo, getBlockedDaysList, TERM_BREAK_NOTICE } from '../../../lib/schoolCalendar';
+import { MEAL_SET_DAILY_PRICE } from '../../../lib/pricingData';
+import { useT, fmtFullDate } from '../../../lib/i18n';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -21,17 +23,31 @@ function getClassDays(classGroup) {
   return { all, nonFri, fri };
 }
 
-// Per-date ordering: each picked date is either Chef's Choice (flat daily price)
-// or custom à-la-carte. Chef's Choice reuses the daily chef rates above:
-// weekday = CHEFS_PRICE.chefs_both (breakfast + lunch), Friday = CHEFS_BRUNCH.
+// Per-date ordering: each meal slot is independently Chef's Choice or custom
+// (à-la-carte). On weekdays a single "Chef's Choice — Both Meals" flag can cover
+// breakfast + lunch at the bundle rate and locks out per-meal custom picks.
+// Each slot value is { mode:'chef' } | { mode:'custom', id } | undefined.
+// Friday is brunch-only (no "both"); chef brunch = CHEFS_BRUNCH.
 function fmt(n) { return `RM ${Number(n).toFixed(2)}`; }
 
-// A date counts as ordered if it's Chef's Choice, or custom with ≥1 item picked.
-function isDatePicked(sel) {
-  return !!sel && (sel.mode === 'chef' || !!sel.breakfast || !!sel.lunch || !!sel.brunch);
+// A meal slot counts as ordered if it's Chef's Choice or custom with an item.
+function mealPicked(m) {
+  return !!m && (m.mode === 'chef' || (m.mode === 'custom' && !!m.id));
 }
-function chefPriceFor(dayNum) {
-  return isFridayDate(dayNum) ? CHEFS_BRUNCH : CHEFS_PRICE.chefs_both;
+// A date counts as ordered if Chef's-Both is on or any meal slot is picked.
+function isDatePicked(sel) {
+  if (!sel) return false;
+  return !!sel.chefBoth || mealPicked(sel.breakfast) || mealPicked(sel.lunch) || mealPicked(sel.brunch);
+}
+
+// Whole-month "Chef's Choice Meal Set": every available (non-holiday) day set to
+// both-meals chef — Fridays become chef brunch. Used by the promo toggle.
+function buildMealSetSelections(classGroup) {
+  const ds = {};
+  for (const day of getAvailableDays(classGroup)) {
+    ds[dateKey(day)] = isFridayDate(day) ? { brunch: { mode: 'chef' } } : { chefBoth: true };
+  }
+  return ds;
 }
 
 // ── Calendar helpers ──────────────────────────────────────────────────────────
@@ -69,16 +85,32 @@ const ALLERGY_OPTIONS = [
 
 const initChild = () => ({
   classGroup:     null,
-  dateSelections: {},    // { "2026-06-22": { mode:'chef' } | { mode:'custom', breakfast, lunch } }
+  mealSet:        false, // Chef's Choice Meal Set — whole-month promo (flat price)
+  dateSelections: {},    // { "2026-06-22": { chefBoth?, breakfast?, lunch?, brunch? } }
   allergies:      {},    // { peanuts: true, noSpicy: true, ... }
   allergyNote:    '',    // free-text for "Other"
 });
 
 // ── Pricing ───────────────────────────────────────────────────────────────────
 
+// Price one meal slot: chef = flat chef rate, custom = the picked item's price.
+function mealCost(slot, chefRate, items) {
+  if (!slot) return 0;
+  if (slot.mode === 'chef') return chefRate;
+  if (slot.mode === 'custom' && slot.id) return items?.find(x => x.id === slot.id)?.price ?? 0;
+  return 0;
+}
+
 function calcChild(data) {
-  const { classGroup, dateSelections } = data;
-  if (!classGroup) return { total: 0, discount: 0, isComplete: false, hint: 'Select class group', selectedCount: 0 };
+  const { classGroup, dateSelections, mealSet } = data;
+  if (!classGroup) return { total: 0, discount: 0, isComplete: false, hintKey: 'order.selectClassGroup', selectedCount: 0 };
+
+  // Chef's Choice Meal Set — promo rate per available study day. Cambridge and
+  // Homeschool/Plus differ here because their day counts differ.
+  if (mealSet) {
+    const days = getAvailableDays(classGroup).length;
+    return { total: days * MEAL_SET_DAILY_PRICE, discount: 0, isComplete: true, hintKey: null, selectedCount: days };
+  }
 
   let total = 0, discount = 0;
 
@@ -89,32 +121,32 @@ function calcChild(data) {
     if (!isDatePicked(sel)) continue;
     const dayM   = MENU_BY_DATE[key];
     const dayNum = parseInt(key.split('-')[2], 10);
-    const fri    = isFridayDate(dayNum);
 
-    if (sel.mode === 'chef') {
-      total += chefPriceFor(dayNum);
-    } else if (fri) {
-      const br = sel.brunch ? dayM?.brunch?.find(x => x.id === sel.brunch) : null;
-      if (br) total += br.price;
+    if (isFridayDate(dayNum)) {
+      total += mealCost(sel.brunch, CHEFS_BRUNCH, dayM?.brunch);
+    } else if (sel.chefBoth) {
+      total += CHEFS_PRICE.chefs_both;
     } else {
-      const bf = sel.breakfast ? dayM?.breakfast?.find(x => x.id === sel.breakfast) : null;
-      const ln = sel.lunch     ? dayM?.lunch?.find(x => x.id === sel.lunch)         : null;
-      total += (bf?.price ?? 0) + (ln?.price ?? 0);
-      if (bf && ln) discount += COMBO_DISCOUNT;
+      total += mealCost(sel.breakfast, CHEFS_PRICE.chefs_bf, dayM?.breakfast);
+      total += mealCost(sel.lunch,     CHEFS_PRICE.chefs_ln, dayM?.lunch);
+      // Combo discount only when both meals are custom item picks.
+      if (sel.breakfast?.mode === 'custom' && sel.breakfast?.id &&
+          sel.lunch?.mode === 'custom'     && sel.lunch?.id) discount += COMBO_DISCOUNT;
     }
   }
   total -= discount;
 
   const selectedCount = Object.values(dateSelections).filter(isDatePicked).length;
   const isComplete = selectedCount > 0;
-  const hint = selectedCount === 0 ? 'Pick at least one date' : null;
+  const hintKey = selectedCount === 0 ? 'order.pickAtLeastOne' : null;
 
-  return { total, discount, isComplete, hint, selectedCount };
+  return { total, discount, isComplete, hintKey, selectedCount };
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PlaceOrderPage() {
+  const { t, lang } = useT();
   const [activeChild, setActiveChild] = useState(KIDS[0]);
   const [childData,   setChildData]   = useState(Object.fromEntries(KIDS.map(k => [k, initChild()])));
   const [submitted,   setSubmitted]   = useState(false);
@@ -134,11 +166,11 @@ export default function PlaceOrderPage() {
           <div style={{ width:56, height:56, background:'#DCFCE7', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 16px' }}>
             <svg width="26" height="26" fill="none" stroke="#16A34A" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
           </div>
-          <h2 style={{ fontSize:20, fontWeight:700, color:'#111827', margin:'0 0 12px' }}>Order Submitted!</h2>
+          <h2 style={{ fontSize:20, fontWeight:700, color:'#111827', margin:'0 0 12px' }}>{t('order.submitted')}</h2>
           {KIDS.map(k => <p key={k} style={{ color:'#6B7280', fontSize:14, margin:'0 0 4px' }}><strong>{k}</strong>: {fmt(allCalcs[k].total)}</p>)}
-          <p style={{ color:'#111827', fontWeight:700, fontSize:16, margin:'12px 0 28px' }}>Total: {fmt(grandTotal)}</p>
+          <p style={{ color:'#111827', fontWeight:700, fontSize:16, margin:'12px 0 28px' }}>{t('order.total', { total: fmt(grandTotal) })}</p>
           <Link href="/parent" style={{ display:'block', background:'#1B5E20', color:'#fff', padding:'13px 0', borderRadius:10, fontWeight:700, fontSize:15, textDecoration:'none' }}>
-            Back to My Orders
+            {t('order.backToOrders')}
           </Link>
         </div>
       </main>
@@ -150,14 +182,14 @@ export default function PlaceOrderPage() {
       <header style={S.header}>
         <Link href="/parent" style={S.backLink}>
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          Back
+          {t('common.back')}
         </Link>
-        <h1 style={S.headerTitle}>Place Order</h1>
-        <p style={S.headerSub}>June 2026 · Chef's Choice or pick per date</p>
+        <h1 style={S.headerTitle}>{t('order.title')}</h1>
+        <p style={S.headerSub}>{t('order.subtitle')}</p>
       </header>
 
       <div style={S.container}>
-        <p style={S.topHint}>Chef's Choice means the kitchen decides daily. Pick per date for full control.</p>
+        <p style={S.topHint}>{t('order.topHint')}</p>
 
         {KIDS.map(kid => {
           const data   = childData[kid];
@@ -165,9 +197,9 @@ export default function PlaceOrderPage() {
           const isOpen = activeChild === kid;
 
           let statusLabel, statusStyle;
-          if (calc.isComplete)         { statusLabel = `Ready · ${fmt(calc.total)}`;        statusStyle = { bg:'#DCFCE7', color:'#166534' }; }
-          else if (!data.classGroup)   { statusLabel = 'Select class group';               statusStyle = { bg:'#F3F4F6', color:'#6B7280' }; }
-          else                         { statusLabel = `${data.classGroup} · ${calc.hint || 'Pick dates'}`; statusStyle = { bg:'#E8F5E9', color:'#1B5E20' }; }
+          if (calc.isComplete)         { statusLabel = t('order.ready', { total: fmt(calc.total) }); statusStyle = { bg:'#DCFCE7', color:'#166534' }; }
+          else if (!data.classGroup)   { statusLabel = t('order.selectClassGroup');           statusStyle = { bg:'#F3F4F6', color:'#6B7280' }; }
+          else                         { statusLabel = `${data.classGroup} · ${calc.hintKey ? t(calc.hintKey) : t('order.pickDates')}`; statusStyle = { bg:'#E8F5E9', color:'#1B5E20' }; }
 
           return (
             <div key={kid} style={{ ...S.childCard, border:`1.5px solid ${isOpen ? '#1B5E20' : '#F3F4F6'}` }}>
@@ -189,7 +221,7 @@ export default function PlaceOrderPage() {
                 <div style={S.childBody}>
 
                   {/* Step 0: Class group */}
-                  <p style={S.bodyLabel}>Class Group</p>
+                  <p style={S.bodyLabel}>{t('order.classGroup')}</p>
                   <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:4 }}>
                     {ALL_CLASSES.map(cls => {
                       const active = data.classGroup === cls;
@@ -216,41 +248,44 @@ export default function PlaceOrderPage() {
                     const { nonFri, fri } = getClassDays(data.classGroup);
                     return (
                       <p style={{ fontSize:12, color:'#6B7280', margin:'0 0 4px' }}>
-                        <strong>{nonFri.length}</strong> school days · <strong>{fri.length}</strong> Friday{fri.length !== 1 ? 's' : ''} available in June 2026
+                        {t('order.daysAvailable', { n: nonFri.length, m: fri.length, friLabel: fri.length !== 1 ? t('order.fridays') : t('order.friday') })}
                       </p>
                     );
                   })()}
 
                   {/* Calendar — only show after class selected */}
                   {!data.classGroup && (
-                    <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'16px 0' }}>Select your child's class group above to continue.</p>
+                    <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'16px 0' }}>{t('order.selectClassPrompt')}</p>
+                  )}
+
+                  {/* Chef's Choice Meal Set — whole-month promo. Fills the calendar
+                      with both-meals chef on every available day (holidays excluded). */}
+                  {data.classGroup && (
+                    <MealSetCard
+                      active={data.mealSet}
+                      days={getClassDays(data.classGroup).all.length}
+                      onToggle={() => update(kid, d => d.mealSet
+                        ? { ...d, mealSet: false, dateSelections: {} }
+                        : { ...d, mealSet: true, dateSelections: buildMealSetSelections(d.classGroup) })}
+                    />
                   )}
 
                   {data.classGroup && (
                     <DateCalendar
-                      kid={kid}
                       classGroup={data.classGroup}
                       dateSelections={data.dateSelections}
-                      onSelect={(key, type, itemId) => update(kid, d => ({
-                        ...d,
-                        dateSelections: {
-                          ...d.dateSelections,
-                          [key]: itemId
-                            ? { ...(d.dateSelections[key] || {}), mode: 'custom', [type]: itemId }
-                            : (() => { const s = { ...(d.dateSelections[key] || {}) }; delete s[type]; return s; })(),
-                        },
-                      }))}
                       onSetDate={(key, next) => update(kid, d => {
                         const ds = { ...d.dateSelections };
                         if (next == null) delete ds[key]; else ds[key] = next;
-                        return { ...d, dateSelections: ds };
+                        // Editing any single day drops the whole-month promo → per-day pricing.
+                        return { ...d, dateSelections: ds, mealSet: false };
                       })}
                     />
                   )}
 
                   {/* ── Allergies & Dietary ── */}
                   <p style={{ ...S.bodyLabel, marginTop: data.classGroup ? 20 : 16 }}>
-                    Food Allergies &amp; Preferences · <span style={{ fontSize:10, color:'#9CA3AF', textTransform:'none', letterSpacing:0 }}>请告知食物过敏或饮食偏好</span>
+                    {t('order.allergies')}
                   </p>
                   <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
                     {ALLERGY_OPTIONS.map(opt => {
@@ -270,19 +305,19 @@ export default function PlaceOrderPage() {
                           {active && (
                             <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                           )}
-                          {opt.en} <span style={{ fontSize:11, opacity:0.7 }}>{opt.zh}</span>
+                          {lang === 'zh' ? opt.zh : opt.en}
                         </button>
                       );
                     })}
                   </div>
                   <div>
                     <label style={{ display:'block', fontSize:11, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 }}>
-                      Other notes · 其他备注
+                      {t('order.otherNotes')}
                     </label>
                     <input
                       value={data.allergyNote}
                       onChange={e => update(kid, d => ({ ...d, allergyNote: e.target.value }))}
-                      placeholder="e.g. No beef / 不吃牛肉"
+                      placeholder={t('order.otherNotesPh')}
                       style={{ width:'100%', padding:'11px 12px', borderRadius:9, border:'1.5px solid #E5E7EB', fontSize:16, outline:'none', boxSizing:'border-box', background:'#fff' }}
                     />
                   </div>
@@ -306,17 +341,17 @@ export default function PlaceOrderPage() {
           </div>
           <div style={S.submitRow}>
             <div>
-              <p style={S.totalLabel}>Grand Total</p>
+              <p style={S.totalLabel}>{t('order.grandTotal')}</p>
               <p style={S.totalAmount}>{fmt(grandTotal)}</p>
             </div>
             <button onClick={() => canSubmit && setSubmitted(true)} disabled={!canSubmit}
               style={{ ...S.submitBtn, opacity: canSubmit ? 1 : 0.45, cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
-              Confirm Order
+              {t('order.confirmOrder')}
             </button>
           </div>
           {!canSubmit && (
             <p style={S.submitHint}>
-              {KIDS.filter(k => !allCalcs[k].isComplete).map(k => `${k.split(' ')[0]}: ${allCalcs[k].hint}`).filter(Boolean).join(' · ')}
+              {KIDS.filter(k => !allCalcs[k].isComplete).map(k => `${k.split(' ')[0]}: ${allCalcs[k].hintKey ? t(allCalcs[k].hintKey) : ''}`).filter(s => s.trim().slice(-1) !== ':').join(' · ')}
             </p>
           )}
         </div>
@@ -342,24 +377,73 @@ function Dot({ filled, color }) {
 }
 
 function MealDots({ isFri, sel }) {
-  const chef = sel?.mode === 'chef'; // Chef's Choice covers the whole day
+  const both = !!sel?.chefBoth;
   return (
     <span style={{ position:'absolute', left:3, top:'50%', transform:'translateY(-50%)', display:'flex', flexDirection:'column', gap:3 }}>
       {isFri ? (
-        <Dot filled={chef || !!sel?.brunch} color="#558B2F" />
+        <Dot filled={mealPicked(sel?.brunch)} color="#558B2F" />
       ) : (
         <>
-          <Dot filled={chef || !!sel?.breakfast} color="#D97706" />
-          <Dot filled={chef || !!sel?.lunch}     color="#2563EB" />
+          <Dot filled={both || mealPicked(sel?.breakfast)} color="#D97706" />
+          <Dot filled={both || mealPicked(sel?.lunch)}     color="#2563EB" />
         </>
       )}
     </span>
   );
 }
 
+// ── MealSetCard ───────────────────────────────────────────────────────────────
+// Chef's Choice Meal Set — whole-month promo. Toggling it on fills every
+// available school day with both-meals chef (a flat promo price); unlike the old
+// version the calendar stays visible so parents see every day it covers.
+
+function MealSetCard({ active, days, onToggle }) {
+  const { t } = useT();
+  return (
+    <div style={{ margin:'6px 0 4px' }}>
+      <button onClick={onToggle} aria-pressed={active} style={{
+        display:'flex', alignItems:'center', gap:12, width:'100%', textAlign:'left',
+        padding:'14px', borderRadius:12, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
+        border:`2px solid ${active ? '#1B5E20' : '#E5E7EB'}`,
+        background: active ? 'linear-gradient(135deg,#1B5E20 0%,#145A32 100%)' : '#fff',
+      }}>
+        <div style={{ width:40, height:40, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center',
+          background: active ? 'rgba(255,255,255,0.18)' : '#F0FDF4' }}>
+          <svg width="22" height="22" fill="none" stroke={active ? '#fff' : '#1B5E20'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:7, flexWrap:'wrap' }}>
+            <span style={{ fontWeight:700, fontSize:15, color: active ? '#fff' : '#111827' }}>{t('order.monthlyName')}</span>
+            <span style={{ fontSize:10, fontWeight:800, letterSpacing:'0.04em', textTransform:'uppercase', padding:'2px 7px', borderRadius:20,
+              background: active ? 'rgba(255,255,255,0.22)' : '#FEF3C7', color: active ? '#fff' : '#B45309' }}>{t('order.monthlyPromo')}</span>
+          </div>
+          <p style={{ margin:'3px 0 0', fontSize:12, color: active ? 'rgba(255,255,255,0.85)' : '#6B7280', lineHeight:1.4 }}>
+            {active ? t('order.monthlyCovers', { n: days }) : t('order.monthlyDesc')}
+          </p>
+          <p style={{ margin:'4px 0 0', fontSize:13, fontWeight:700, color: active ? '#fff' : '#1B5E20' }}>
+            {fmt(MEAL_SET_DAILY_PRICE * days)}
+            <span style={{ fontWeight:500, fontSize:11, opacity:0.85, marginLeft:6 }}>
+              {t('order.mealSetPerDay', { rate: fmt(MEAL_SET_DAILY_PRICE), n: days })}
+            </span>
+          </p>
+        </div>
+        <span style={{ flexShrink:0, width:44, height:26, borderRadius:20, padding:2, display:'flex', alignItems:'center',
+          justifyContent: active ? 'flex-end' : 'flex-start',
+          background: active ? 'rgba(255,255,255,0.35)' : '#E5E7EB', transition:'all 150ms' }}>
+          <span style={{ width:22, height:22, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)' }} />
+        </span>
+      </button>
+      <p style={{ fontSize:11, color: active ? '#1B5E20' : '#9CA3AF', margin:'6px 2px 0', lineHeight:1.4 }}>
+        {active ? t('order.monthlyActive') : t('order.monthlyHint')}
+      </p>
+    </div>
+  );
+}
+
 // ── DateCalendar ──────────────────────────────────────────────────────────────
 
-function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) {
+function DateCalendar({ classGroup, dateSelections, onSetDate }) {
+  const { t, lang } = useT();
   const [openDate, setOpenDate] = useState(null);
   const availableDays = getAvailableDays(classGroup);
 
@@ -376,9 +460,9 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
   return (
     <div style={{ marginTop:14 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
-        <p style={S.bodyLabel}>Pick per date · June 2026</p>
+        <p style={S.bodyLabel}>{t('order.pickPerDate')}</p>
         <span style={{ fontSize:12, color: totalSelected > 0 ? '#1B5E20' : '#9CA3AF', fontWeight:600 }}>
-          {totalSelected} day{totalSelected !== 1 ? 's' : ''} selected
+          {t('order.daysSelected', { n: totalSelected })}
         </span>
       </div>
 
@@ -386,7 +470,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
       <div style={{ background:'#F9FAFB', borderRadius:12, padding:'12px 10px', marginBottom:14 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5, 1fr)', gap:3, marginBottom:3 }}>
           {GRID_H.map(d => (
-            <div key={d} style={{ textAlign:'center', fontSize:10, fontWeight:700, color:'#9CA3AF', padding:'2px 0' }}>{d}</div>
+            <div key={d} style={{ textAlign:'center', fontSize:10, fontWeight:700, color:'#9CA3AF', padding:'2px 0' }}>{t('wd.' + d)}</div>
           ))}
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5, 1fr)', gap:3 }}>
@@ -406,7 +490,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
               const hFri    = dow === 5;
               // Holidays are no longer hard-blocked — tappable to order with a warning.
               return (
-                <button key={i} title={`${info.name} — holiday, tap to order anyway`}
+                <button key={i} title={t('order.holidayTapTitle', { name: info.name })}
                   onClick={() => setOpenDate(hOpen ? null : date)}
                   style={{ position:'relative', aspectRatio:'1', borderRadius:7,
                     background: isBreak ? '#FFFBEB' : '#FFF5F5',
@@ -450,11 +534,11 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
 
       {/* Legend */}
       <div style={{ display:'flex', gap:12, marginBottom:12, fontSize:11, color:'#9CA3AF', flexWrap:'wrap' }}>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#D97706', display:'inline-block' }} /> Breakfast</span>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2563EB', display:'inline-block' }} /> Lunch</span>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#558B2F', display:'inline-block' }} /> Fri brunch</span>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFFBEB', border:'1px solid #FDE68A', display:'inline-block' }} /> Term break</span>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFF5F5', border:'1px solid #FECACA', display:'inline-block' }} /> Public holiday</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#D97706', display:'inline-block' }} /> {t('meal.breakfast')}</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2563EB', display:'inline-block' }} /> {t('meal.lunch')}</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#558B2F', display:'inline-block' }} /> {t('meal.brunch')}</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFFBEB', border:'1px solid #FDE68A', display:'inline-block' }} /> {t('legend.termBreak')}</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFF5F5', border:'1px solid #FECACA', display:'inline-block' }} /> {t('legend.publicHoliday')}</span>
       </div>
 
       {/* Holiday / break list */}
@@ -473,7 +557,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
         if (unique.length === 0) return null;
         return (
           <div style={{ background:'#F9FAFB', borderRadius:10, padding:'10px 12px', marginBottom:8 }}>
-            <p style={{ fontSize:11, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>Blocked Dates</p>
+            <p style={{ fontSize:11, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 8px' }}>{t('order.blockedDates')}</p>
             <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
               {unique.map((h, i) => (
                 <div key={i} style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -498,7 +582,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
       })()}
 
       <p style={{ fontSize:12, color:'#9CA3AF', textAlign:'center' }}>
-        Tap any date to choose <strong>Chef's Choice</strong> or pick the menu yourself. Holidays are tappable too.
+        {t('order.tapHint')}
       </p>
 
       {/* Date menu — bottom-sheet popup so parents don't have to scroll */}
@@ -507,27 +591,69 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
         const key    = dateKey(openDate);
         const dayM   = MENU_BY_DATE[key];
         const sel    = dateSelections[key] || {};
-        const mode   = sel.mode || null;          // 'chef' | 'custom' | null (not chosen yet)
         const hasSel = isDatePicked(sel);
-        const chefPrice = isFri ? CHEFS_BRUNCH : CHEFS_PRICE.chefs_both;
+        const anySel = !!(sel.chefBoth || sel.breakfast || sel.lunch || sel.brunch);
 
         const holiday   = getHolidayInfo(classGroup, openDate);
         const isHoliday = !!holiday && !isDateAvailable(classGroup, openDate);
         const hAccent   = !isHoliday ? (isFri ? '#558B2F' : '#1B5E20')
                                      : (holiday.type === 'break' ? '#D97706' : '#DC2626');
 
-        const close       = () => setOpenDate(null);
-        const clear       = () => onSetDate(key, null);
-        const chooseChef  = () => onSetDate(key, { mode: 'chef' });
-        const chooseCustom = () => onSetDate(key, mode === 'custom' ? sel : { mode: 'custom' });
+        const close = () => setOpenDate(null);
+        const clear = () => onSetDate(key, null);
 
-        // Two big option cards at the top of the sheet
-        const modeCardStyle = (active, color, tint) => ({
-          flex:1, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:3,
-          padding:'12px', borderRadius:11, cursor:'pointer', textAlign:'left',
-          border:`2px solid ${active ? color : '#E5E7EB'}`,
-          background: active ? tint : '#fff', touchAction:'manipulation', transition:'all 150ms',
+        // "Chef's Choice — Both Meals" (weekdays): exclusive toggle that clears
+        // any per-meal picks and locks the per-meal controls below.
+        const toggleBoth = () => onSetDate(key, sel.chefBoth ? null : { chefBoth: true });
+
+        // Set/clear one meal slot. Any per-meal action turns Chef's-Both off; the
+        // date is removed entirely once no slot is set.
+        const applyMeal = (slot, val) => {
+          const next = { ...sel };
+          delete next.chefBoth;
+          if (val == null) delete next[slot]; else next[slot] = val;
+          const hasAny = next.breakfast || next.lunch || next.brunch;
+          onSetDate(key, hasAny ? next : null);
+        };
+        const setChef   = (slot) => applyMeal(slot, sel[slot]?.mode === 'chef' ? null : { mode: 'chef' });
+        const setCustom = (slot) => applyMeal(slot, sel[slot]?.mode === 'custom' ? null : { mode: 'custom', ...(sel[slot]?.id ? { id: sel[slot].id } : {}) });
+        const pickItem  = (slot, id) => {
+          const newId = sel[slot]?.id === id ? null : id; // tapping the chosen item clears it
+          applyMeal(slot, { mode: 'custom', ...(newId ? { id: newId } : {}) });
+        };
+
+        // One meal slot: chef/custom segmented toggle + (when custom) its menu.
+        const segStyle = (active, color, tint) => ({
+          flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2,
+          padding:'10px 6px', borderRadius:10, cursor:'pointer', touchAction:'manipulation',
+          transition:'all 150ms', border:`2px solid ${active ? color : '#E5E7EB'}`, background: active ? tint : '#fff',
         });
+        const renderSlot = (slot, label, accent, tint, chefRate, items) => {
+          const m        = sel[slot];
+          const locked   = !isFri && !!sel.chefBoth;
+          const isChef   = m?.mode === 'chef' || locked; // Both → show chef as picked
+          const isCustom = m?.mode === 'custom' && !locked;
+          return (
+            <div style={{ marginBottom:14, opacity: locked ? 0.4 : 1, pointerEvents: locked ? 'none' : 'auto' }}>
+              <p style={{ margin:'0 0 8px', fontSize:12, fontWeight:700, color:'#374151' }}>{label}</p>
+              <div style={{ display:'flex', gap:8 }}>
+                <button onClick={() => setChef(slot)} aria-pressed={isChef} style={segStyle(isChef, '#1B5E20', '#F0FDF4')}>
+                  <span style={{ fontSize:13, fontWeight:700, color: isChef ? '#1B5E20' : '#111827' }}>{t('order.chefsChoice')}</span>
+                  <span style={{ fontSize:11, fontWeight:600, color: isChef ? '#1B5E20' : '#6B7280', fontVariantNumeric:'tabular-nums' }}>{fmt(chefRate)}</span>
+                </button>
+                <button onClick={() => setCustom(slot)} aria-pressed={isCustom} style={segStyle(isCustom, accent, tint)}>
+                  <span style={{ fontSize:13, fontWeight:700, color: isCustom ? accent : '#111827' }}>{t('order.illChoose')}</span>
+                  <span style={{ fontSize:11, fontWeight:600, color: isCustom ? accent : '#6B7280' }}>{t('order.pickMenu')}</span>
+                </button>
+              </div>
+              {isCustom && (
+                <div style={{ marginTop:10 }}>
+                  <MealItems items={items} selected={m.id} accentColor={accent} onSelect={id => pickItem(slot, id)} />
+                </div>
+              )}
+            </div>
+          );
+        };
 
         return (
           <div role="dialog" aria-modal="true" onClick={close} style={S.sheetOverlay}>
@@ -539,17 +665,17 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
                   <div style={{ minWidth:0 }}>
                     <p style={{ margin:0, fontWeight:700, fontSize:16, color:'#111827' }}>
-                      {dayLabel(openDate)}, {ordinal(openDate)} June
+                      {fmtFullDate(lang, openDate, false)}
                     </p>
-                    {isFri && <span style={{ fontSize:11, background:'#F1F8E9', color:'#558B2F', padding:'1px 7px', borderRadius:10, fontWeight:600 }}>Brunch only</span>}
+                    {isFri && <span style={{ fontSize:11, background:'#F1F8E9', color:'#558B2F', padding:'1px 7px', borderRadius:10, fontWeight:600 }}>{t('order.brunchOnly')}</span>}
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
-                    {mode && (
+                    {anySel && (
                       <button onClick={clear} style={{ fontSize:13, color:'#9CA3AF', background:'none', border:'none', cursor:'pointer', padding:'4px 2px' }}>
-                        Clear
+                        {t('common.clear')}
                       </button>
                     )}
-                    <button onClick={close} aria-label="Close" style={S.sheetClose}>
+                    <button onClick={close} aria-label={t('common.close')} style={S.sheetClose}>
                       <svg width="16" height="16" fill="none" stroke="#6B7280" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   </div>
@@ -563,70 +689,71 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
                   <div style={{ display:'flex', gap:8, alignItems:'flex-start', background: holiday.type==='break' ? '#FFFBEB' : '#FFF5F5', border:`1px solid ${holiday.type==='break' ? '#FDE68A' : '#FECACA'}`, borderRadius:9, padding:'10px 12px', marginBottom:12 }}>
                     <svg width="16" height="16" fill="none" stroke={hAccent} strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0, marginTop:1 }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A2 2 0 003.83 21h16.34a2 2 0 001.72-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
                     <div>
-                      <p style={{ margin:0, fontSize:13, fontWeight:700, color:hAccent }}>{holiday.name} — school holiday</p>
-                      <p style={{ margin:'2px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>No classes this day. You can still order if your child will be in.</p>
+                      <p style={{ margin:0, fontSize:13, fontWeight:700, color:hAccent }}>{t('order.schoolHoliday', { name: holiday.name })}</p>
+                      <p style={{ margin:'2px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>{t('order.noClasses')}</p>
                     </div>
                   </div>
                 )}
 
-                {/* Step 1: how to order this day */}
-                <div style={{ display:'flex', gap:10, marginBottom: mode ? 16 : 4 }}>
-                  <button onClick={chooseChef} aria-pressed={mode==='chef'} style={modeCardStyle(mode==='chef', '#1B5E20', '#F0FDF4')}>
-                    <svg width="20" height="20" fill="none" stroke={mode==='chef' ? '#1B5E20' : '#9CA3AF'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
-                    <span style={{ fontWeight:700, fontSize:14, color: mode==='chef' ? '#1B5E20' : '#111827' }}>Chef's Choice</span>
-                    <span style={{ fontSize:11, color:'#6B7280' }}>Kitchen decides · {fmt(chefPrice)}</span>
-                  </button>
-                  <button onClick={chooseCustom} aria-pressed={mode==='custom'} style={modeCardStyle(mode==='custom', '#2563EB', '#EFF6FF')}>
-                    <svg width="20" height="20" fill="none" stroke={mode==='custom' ? '#2563EB' : '#9CA3AF'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" /></svg>
-                    <span style={{ fontWeight:700, fontSize:14, color: mode==='custom' ? '#2563EB' : '#111827' }}>I'll Choose</span>
-                    <span style={{ fontSize:11, color:'#6B7280' }}>Pick the menu</span>
-                  </button>
-                </div>
-
-                {/* Nudge when nothing chosen yet */}
-                {!mode && (
-                  <p style={{ fontSize:12, color:'#9CA3AF', textAlign:'center', margin:'10px 0 2px' }}>
-                    Choose how you'd like to order {dayLabel(openDate)}.
-                  </p>
-                )}
-
-                {/* Step 2a: Chef's Choice confirmation */}
-                {mode === 'chef' && (
-                  <div style={{ display:'flex', gap:8, alignItems:'center', background:'#F0FDF4', border:'1px solid #C8E6C9', borderRadius:10, padding:'12px' }}>
-                    <svg width="18" height="18" fill="none" stroke="#16A34A" strokeWidth="2.5" viewBox="0 0 24 24" style={{ flexShrink:0 }}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                    <p style={{ margin:0, fontSize:13, color:'#166534', lineHeight:1.45 }}>
-                      <strong>Chef's Choice set.</strong> Our kitchen prepares {isFri ? 'brunch' : 'breakfast &amp; lunch'} for this day — <strong>{fmt(chefPrice)}</strong>.
-                    </p>
-                  </div>
-                )}
-
-                {/* Step 2b: pick from the menu */}
-                {mode === 'custom' && (
-                  isFri ? (
-                    <MealItems title="Brunch" items={dayM?.brunch || []} selected={sel.brunch} accentColor="#558B2F"
-                      onSelect={id => onSelect(key, 'brunch', id === sel.brunch ? null : id)} />
-                  ) : (
-                    <>
-                      <MealItems title="Breakfast (optional)" items={dayM?.breakfast || []} selected={sel.breakfast} accentColor="#D97706"
-                        onSelect={id => onSelect(key, 'breakfast', id === sel.breakfast ? null : id)} />
-                      <div style={{ marginTop:12 }}>
-                        <MealItems title="Lunch (optional)" items={dayM?.lunch || []} selected={sel.lunch} accentColor="#2563EB"
-                          onSelect={id => onSelect(key, 'lunch', id === sel.lunch ? null : id)} />
+                {/* Chef's Choice — Both Meals (weekdays only): one tap covers
+                    breakfast + lunch and locks out per-meal "I'll Choose". */}
+                {!isFri && (
+                  <>
+                    <button onClick={toggleBoth} aria-pressed={!!sel.chefBoth} style={{
+                      display:'flex', alignItems:'center', gap:12, width:'100%', textAlign:'left',
+                      padding:'14px', borderRadius:12, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
+                      border:`2px solid ${sel.chefBoth ? '#1B5E20' : '#E5E7EB'}`,
+                      background: sel.chefBoth ? 'linear-gradient(135deg,#1B5E20 0%,#145A32 100%)' : '#fff',
+                    }}>
+                      <div style={{ width:40, height:40, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center',
+                        background: sel.chefBoth ? 'rgba(255,255,255,0.18)' : '#F0FDF4' }}>
+                        <svg width="22" height="22" fill="none" stroke={sel.chefBoth ? '#fff' : '#1B5E20'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
                       </div>
-                      {sel.breakfast && sel.lunch && (
-                        <p style={{ fontSize:11, color:'#16A34A', fontWeight:600, marginTop:8 }}>
-                          ✓ Combo — RM 1.00 discount applied
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <span style={{ fontWeight:700, fontSize:15, color: sel.chefBoth ? '#fff' : '#111827' }}>{t('order.chefBothName')}</span>
+                        <p style={{ margin:'3px 0 0', fontSize:12, color: sel.chefBoth ? 'rgba(255,255,255,0.85)' : '#6B7280', lineHeight:1.4 }}>
+                          {t('order.chefBothDesc', { price: fmt(CHEFS_PRICE.chefs_both) })}
                         </p>
-                      )}
-                    </>
-                  )
+                      </div>
+                      <span style={{ flexShrink:0, width:44, height:26, borderRadius:20, padding:2, display:'flex', alignItems:'center',
+                        justifyContent: sel.chefBoth ? 'flex-end' : 'flex-start',
+                        background: sel.chefBoth ? 'rgba(255,255,255,0.35)' : '#E5E7EB', transition:'all 150ms' }}>
+                        <span style={{ width:22, height:22, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)' }} />
+                      </span>
+                    </button>
+
+                    {sel.chefBoth ? (
+                      <p style={{ fontSize:11, color:'#1B5E20', margin:'8px 2px 14px', lineHeight:1.4 }}>{t('order.chefBothLocked')}</p>
+                    ) : (
+                      <div style={{ display:'flex', alignItems:'center', gap:10, margin:'14px 0' }}>
+                        <span style={{ flex:1, height:1, background:'#F3F4F6' }} />
+                        <span style={{ fontSize:11, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.04em' }}>{t('order.orPerMeal')}</span>
+                        <span style={{ flex:1, height:1, background:'#F3F4F6' }} />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Per-meal chef/custom rows — breakfast + lunch (weekdays) or brunch (Fri) */}
+                {isFri ? (
+                  renderSlot('brunch', t('meal.brunch'), '#558B2F', '#F1F8E9', CHEFS_BRUNCH, dayM?.brunch || [])
+                ) : (
+                  <>
+                    {renderSlot('breakfast', t('meal.breakfast'), '#D97706', '#FFF7ED', CHEFS_PRICE.chefs_bf, dayM?.breakfast || [])}
+                    {renderSlot('lunch', t('meal.lunch'), '#2563EB', '#EFF6FF', CHEFS_PRICE.chefs_ln, dayM?.lunch || [])}
+                    {!sel.chefBoth && sel.breakfast?.mode === 'custom' && sel.breakfast?.id && sel.lunch?.mode === 'custom' && sel.lunch?.id && (
+                      <p style={{ fontSize:11, color:'#16A34A', fontWeight:600, margin:'-4px 0 0' }}>
+                        {t('order.combo')}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
               {/* Sticky footer — selections auto-save, Done just closes */}
               <div style={S.sheetFoot}>
                 <button onClick={close} style={S.sheetDone}>
-                  {hasSel ? 'Done' : 'Close'}
+                  {hasSel ? t('common.done') : t('common.close')}
                 </button>
               </div>
             </div>
@@ -642,7 +769,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) 
 function MealItems({ title, items, selected, onSelect, accentColor }) {
   return (
     <div>
-      <p style={{ margin:'0 0 7px', fontSize:12, fontWeight:600, color:'#374151' }}>{title}</p>
+      {title && <p style={{ margin:'0 0 7px', fontSize:12, fontWeight:600, color:'#374151' }}>{title}</p>}
       <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
         {items.map(item => {
           const active = selected === item.id;
