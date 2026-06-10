@@ -21,32 +21,38 @@ function getClassDays(classGroup) {
   return { all, nonFri, fri };
 }
 
-// Week plan options
-// chefs_both includes Friday brunch automatically — no separate Friday section
-const WEEK_PLANS = [
-  { id: 'chefs_both', label: "Chef's Choice", sub: '早餐、午餐与早午餐', note: 'Breakfast, Lunch & Friday Brunch', price: CHEFS_PRICE.chefs_both, includesFriBrunch: true },
-  { id: 'chefs_bf',   label: "Chef's Choice", sub: '早餐',               note: 'Breakfast only (Mon–Thu)',         price: CHEFS_PRICE.chefs_bf,   includesFriBrunch: false },
-  { id: 'chefs_ln',   label: "Chef's Choice", sub: '午餐',               note: 'Lunch only (Mon–Thu)',             price: CHEFS_PRICE.chefs_ln,   includesFriBrunch: false },
-  { id: 'custom',     label: "I'll choose",   sub: '自己选择',            note: 'Pick per date',                    price: null,                   includesFriBrunch: false },
-];
-const FRI_PLANS = [
-  { id: 'custom_brunch', label: "I'll choose", sub: '自己选择', note: 'Pick from brunch menu', price: null },
-];
-
+// Per-date ordering: each picked date is either Chef's Choice (flat daily price)
+// or custom à-la-carte. Chef's Choice reuses the daily chef rates above:
+// weekday = CHEFS_PRICE.chefs_both (breakfast + lunch), Friday = CHEFS_BRUNCH.
 function fmt(n) { return `RM ${Number(n).toFixed(2)}`; }
+
+// A date counts as ordered if it's Chef's Choice, or custom with ≥1 item picked.
+function isDatePicked(sel) {
+  return !!sel && (sel.mode === 'chef' || !!sel.breakfast || !!sel.lunch || !!sel.brunch);
+}
+function chefPriceFor(dayNum) {
+  return isFridayDate(dayNum) ? CHEFS_BRUNCH : CHEFS_PRICE.chefs_both;
+}
 
 // ── Calendar helpers ──────────────────────────────────────────────────────────
 
+// Weekday-only (Mon–Fri) calendar — weekends are excluded entirely.
 function calendarCells() {
-  const firstDow = new Date(2026, 5, 1).getDay();
-  const blanks   = firstDow === 0 ? 6 : firstDow - 1;
-  const cells    = [];
-  for (let i = 0; i < blanks; i++) cells.push(null);
-  for (let d = 1; d <= 30; d++) cells.push(d);
+  const cells = [];
+  let started = false;
+  for (let d = 1; d <= 30; d++) {
+    const dow = new Date(2026, 5, d).getDay(); // 0=Sun … 6=Sat
+    if (dow === 0 || dow === 6) continue;      // skip weekends
+    if (!started) {
+      for (let b = 0; b < dow - 1; b++) cells.push(null); // align to Monday start
+      started = true;
+    }
+    cells.push(d);
+  }
   return cells;
 }
 const CELLS = calendarCells();
-const GRID_H = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const GRID_H = ['Mon','Tue','Wed','Thu','Fri'];
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
@@ -63,10 +69,7 @@ const ALLERGY_OPTIONS = [
 
 const initChild = () => ({
   classGroup:     null,
-  weekPlan:       null,
-  friBrunch:      null,
-  friSelection:   null,
-  dateSelections: {},
+  dateSelections: {},    // { "2026-06-22": { mode:'chef' } | { mode:'custom', breakfast, lunch } }
   allergies:      {},    // { peanuts: true, noSpicy: true, ... }
   allergyNote:    '',    // free-text for "Other"
 });
@@ -74,66 +77,39 @@ const initChild = () => ({
 // ── Pricing ───────────────────────────────────────────────────────────────────
 
 function calcChild(data) {
-  const { classGroup, weekPlan, friBrunch, friSelection, dateSelections } = data;
-  if (!classGroup) return { total: 0, discount: 0, isComplete: false, hint: 'Select class group', selectedCount: null };
+  const { classGroup, dateSelections } = data;
+  if (!classGroup) return { total: 0, discount: 0, isComplete: false, hint: 'Select class group', selectedCount: 0 };
 
-  const { all: schoolDays, nonFri: nonFriDays, fri: friDays } = getClassDays(classGroup) || {};
+  let total = 0, discount = 0;
 
-  let weekTotal = 0, friTotal = 0, discount = 0;
+  // Price every date the parent actually ordered (Chef's Choice = flat daily
+  // rate; custom = à-la-carte). Holidays are included — they're not blocked.
+  for (const key of Object.keys(dateSelections)) {
+    const sel = dateSelections[key];
+    if (!isDatePicked(sel)) continue;
+    const dayM   = MENU_BY_DATE[key];
+    const dayNum = parseInt(key.split('-')[2], 10);
+    const fri    = isFridayDate(dayNum);
 
-  const planDef = WEEK_PLANS.find(p => p.id === weekPlan);
-
-  if (weekPlan === 'chefs_both') {
-    weekTotal = CHEFS_PRICE.chefs_both * nonFriDays.length;
-    friTotal  = CHEFS_BRUNCH * friDays.length; // bundled
-  } else if (weekPlan === 'chefs_bf') {
-    weekTotal = CHEFS_PRICE.chefs_bf * nonFriDays.length;
-  } else if (weekPlan === 'chefs_ln') {
-    weekTotal = CHEFS_PRICE.chefs_ln * nonFriDays.length;
-  } else if (weekPlan === 'custom') {
-    // Iterate the dates the parent actually picked. This includes holiday/break
-    // dates (not in schoolDays) — holidays are no longer hard-blocked, so any
-    // meals chosen on them must still be priced.
-    for (const key of Object.keys(dateSelections)) {
-      const sel  = dateSelections[key] || {};
-      const dayM = MENU_BY_DATE[key];
-      const dayNum = parseInt(key.split('-')[2], 10);
-      if (isFridayDate(dayNum)) {
-        const br = sel.brunch ? dayM?.brunch?.find(x => x.id === sel.brunch) : null;
-        if (br) weekTotal += br.price;
-      } else {
-        const bf = sel.breakfast ? dayM?.breakfast?.find(x => x.id === sel.breakfast) : null;
-        const ln = sel.lunch     ? dayM?.lunch?.find(x => x.id === sel.lunch)         : null;
-        weekTotal += (bf?.price ?? 0) + (ln?.price ?? 0);
-        if (bf && ln) discount += COMBO_DISCOUNT;
-      }
+    if (sel.mode === 'chef') {
+      total += chefPriceFor(dayNum);
+    } else if (fri) {
+      const br = sel.brunch ? dayM?.brunch?.find(x => x.id === sel.brunch) : null;
+      if (br) total += br.price;
+    } else {
+      const bf = sel.breakfast ? dayM?.breakfast?.find(x => x.id === sel.breakfast) : null;
+      const ln = sel.lunch     ? dayM?.lunch?.find(x => x.id === sel.lunch)         : null;
+      total += (bf?.price ?? 0) + (ln?.price ?? 0);
+      if (bf && ln) discount += COMBO_DISCOUNT;
     }
   }
+  total -= discount;
 
-  // For chefs_bf / chefs_ln: optional Friday with custom pick only
-  if (weekPlan && weekPlan !== 'custom' && weekPlan !== 'chefs_both') {
-    if (friBrunch === 'custom_brunch' && friSelection && friDays.length > 0) {
-      const anyFriMenu = MENU_BY_DATE[dateKey(friDays[0])];
-      const item = anyFriMenu?.brunch?.find(x => x.id === friSelection);
-      if (item) friTotal = item.price * friDays.length;
-    }
-  }
+  const selectedCount = Object.values(dateSelections).filter(isDatePicked).length;
+  const isComplete = selectedCount > 0;
+  const hint = selectedCount === 0 ? 'Pick at least one date' : null;
 
-  const total = weekTotal + friTotal - discount;
-
-  // chefs_both: Friday bundled → always ok
-  // chefs_bf / chefs_ln: Friday optional → always ok (no requirement)
-  // custom: at least 1 date
-  const realSelectedCount = Object.values(dateSelections).filter(s => s && Object.keys(s).length > 0).length;
-  const weekOk = weekPlan !== null && (weekPlan !== 'custom' || realSelectedCount > 0);
-  const friOk  = true; // Friday is either bundled, optional, or handled in custom calendar
-  const isComplete = weekOk && friOk;
-
-  let hint = null;
-  if (!weekPlan) hint = 'Select a week plan';
-  else if (weekPlan === 'custom' && realSelectedCount === 0) hint = 'Pick at least one date';
-
-  return { total, discount, isComplete, hint, selectedCount: realSelectedCount, nonFriDays, friDays };
+  return { total, discount, isComplete, hint, selectedCount };
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -189,10 +165,9 @@ export default function PlaceOrderPage() {
           const isOpen = activeChild === kid;
 
           let statusLabel, statusStyle;
-          if (calc.isComplete)         { statusLabel = `Ready · ${fmt(calc.total)}`;                 statusStyle = { bg:'#DCFCE7', color:'#166534' }; }
-          else if (!data.classGroup)   { statusLabel = 'Select class group';                          statusStyle = { bg:'#F3F4F6', color:'#6B7280' }; }
-          else if (data.weekPlan)      { statusLabel = calc.hint || 'In progress';                   statusStyle = { bg:'#FEF9C3', color:'#854D0E' }; }
-          else                         { statusLabel = `${data.classGroup} · Select plan`;            statusStyle = { bg:'#E8F5E9', color:'#1B5E20' }; }
+          if (calc.isComplete)         { statusLabel = `Ready · ${fmt(calc.total)}`;        statusStyle = { bg:'#DCFCE7', color:'#166534' }; }
+          else if (!data.classGroup)   { statusLabel = 'Select class group';               statusStyle = { bg:'#F3F4F6', color:'#6B7280' }; }
+          else                         { statusLabel = `${data.classGroup} · ${calc.hint || 'Pick dates'}`; statusStyle = { bg:'#E8F5E9', color:'#1B5E20' }; }
 
           return (
             <div key={kid} style={{ ...S.childCard, border:`1.5px solid ${isOpen ? '#1B5E20' : '#F3F4F6'}` }}>
@@ -221,7 +196,7 @@ export default function PlaceOrderPage() {
                       const colors = { Cambridge:'#1565C0', Homeschool:'#1B5E20', Plus:'#558B2F' };
                       const c = colors[cls] || '#1B5E20';
                       return (
-                        <button key={cls} onClick={() => update(kid, d => ({ ...d, classGroup: cls, weekPlan: null, friBrunch: null, friSelection: null, dateSelections: {} }))}
+                        <button key={cls} onClick={() => update(kid, d => ({ ...d, classGroup: cls, dateSelections: {} }))}
                           style={{ padding:'8px 16px', borderRadius:20, border:`2px solid ${active ? c : '#E5E7EB'}`, background: active ? c : '#fff', color: active ? '#fff' : '#374151', fontWeight:700, fontSize:13, cursor:'pointer', transition:'all 150ms', touchAction:'manipulation' }}>
                           {cls}
                         </button>
@@ -246,45 +221,12 @@ export default function PlaceOrderPage() {
                     );
                   })()}
 
-                  {/* Week plan — only show after class selected */}
+                  {/* Calendar — only show after class selected */}
                   {!data.classGroup && (
                     <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'16px 0' }}>Select your child's class group above to continue.</p>
                   )}
 
-                  {data.classGroup && <>
-                  {/* Week plan */}
-                  <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                    {WEEK_PLANS.map(plan => {
-                      const active = data.weekPlan === plan.id;
-                      const { nonFri: nonFriDays, fri: friDays2 } = getClassDays(data.classGroup);
-                      const monthTotal = plan.price !== null
-                        ? plan.price * nonFriDays.length + (plan.includesFriBrunch ? CHEFS_BRUNCH * friDays2.length : 0)
-                        : null;
-                      return (
-                        <button key={plan.id} onClick={() => update(kid, d => ({ ...d, weekPlan: plan.id }))}
-                          style={{ ...S.planCard, ...(active ? S.planCardActive : {}) }} aria-pressed={active}>
-                          <div style={{ flex:1, textAlign:'left' }}>
-                            <p style={{ margin:0, fontWeight:700, fontSize:14, color: active ? '#1B5E20' : '#111827' }}>{plan.label}</p>
-                            <p style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280' }}>{plan.note} · <strong>{plan.sub}</strong></p>
-                          </div>
-                          {monthTotal !== null && (
-                            <div style={{ textAlign:'right', flexShrink:0 }}>
-                              <span style={{ fontSize:13, fontWeight:700, color: active ? '#1B5E20' : '#374151', display:'block' }}>
-                                {fmt(plan.price)}/day
-                              </span>
-                              <span style={{ fontSize:11, color:'#9CA3AF' }}>{fmt(monthTotal)}/mth</span>
-                            </div>
-                          )}
-                          <div style={{ ...S.radio, borderColor: active ? '#1B5E20' : '#D1D5DB', background: active ? '#1B5E20' : 'transparent' }}>
-                            {active && <svg width="10" height="10" fill="none" stroke="#fff" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Custom: per-date calendar */}
-                  {data.weekPlan === 'custom' && (
+                  {data.classGroup && (
                     <DateCalendar
                       kid={kid}
                       classGroup={data.classGroup}
@@ -294,68 +236,17 @@ export default function PlaceOrderPage() {
                         dateSelections: {
                           ...d.dateSelections,
                           [key]: itemId
-                            ? { ...(d.dateSelections[key] || {}), [type]: itemId }
-                            : (() => { const s = { ...(d.dateSelections[key] || {}) }; delete s[type]; return Object.keys(s).length ? s : undefined; })(),
+                            ? { ...(d.dateSelections[key] || {}), mode: 'custom', [type]: itemId }
+                            : (() => { const s = { ...(d.dateSelections[key] || {}) }; delete s[type]; return s; })(),
                         },
                       }))}
+                      onSetDate={(key, next) => update(kid, d => {
+                        const ds = { ...d.dateSelections };
+                        if (next == null) delete ds[key]; else ds[key] = next;
+                        return { ...d, dateSelections: ds };
+                      })}
                     />
                   )}
-
-                  {/* Friday brunch:
-                      - chefs_both: bundled, show info badge only
-                      - chefs_bf / chefs_ln: optional custom pick
-                      - custom: handled in calendar */}
-                  {data.weekPlan === 'chefs_both' && (
-                    <div style={{ display:'flex', alignItems:'center', gap:8, background:'#E8F5E9', border:'1px solid #C8E6C9', borderRadius:9, padding:'9px 12px', marginTop:12 }}>
-                      <svg width="15" height="15" fill="none" stroke="#1B5E20" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                      <p style={{ margin:0, fontSize:13, color:'#1B5E20', fontWeight:600 }}>
-                        Friday Brunch included — Chef picks for all {(() => { const { fri } = getClassDays(data.classGroup); return fri.length; })()} Fridays
-                      </p>
-                    </div>
-                  )}
-
-                  {data.weekPlan && data.weekPlan !== 'custom' && data.weekPlan !== 'chefs_both' && (
-                    <>
-                      {(() => {
-                        const { fri: friDays } = getClassDays(data.classGroup);
-                        if (friDays.length === 0) return <p style={{ fontSize:12, color:'#9CA3AF', margin:'8px 0 0' }}>No Fridays available for your class this month.</p>;
-                        return (<>
-                          <p style={{ ...S.bodyLabel, marginTop:20 }}>Friday Brunch · {friDays.length} Friday{friDays.length !== 1 ? 's' : ''} <span style={{ color:'#9CA3AF', fontWeight:400, textTransform:'none', letterSpacing:0 }}>(optional)</span></p>
-                          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                            {FRI_PLANS.map(plan => {
-                              const active = data.friBrunch === plan.id;
-                              return (
-                                <button key={plan.id} onClick={() => update(kid, d => ({ ...d, friBrunch: plan.id, friSelection: null }))}
-                                  style={{ ...S.planCard, ...(active ? { ...S.planCardActive, borderColor:'#558B2F', background:'#F1F8E9' } : {}) }} aria-pressed={active}>
-                                  <div style={{ flex:1, textAlign:'left' }}>
-                                    <p style={{ margin:0, fontWeight:700, fontSize:14, color: active ? '#558B2F' : '#111827' }}>{plan.label}</p>
-                                    <p style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280' }}>{plan.note} · <strong>{plan.sub}</strong></p>
-                                  </div>
-                                  {plan.price !== null && (
-                                    <span style={{ fontSize:13, fontWeight:700, color: active ? '#558B2F' : '#374151', whiteSpace:'nowrap' }}>{fmt(plan.price)}/day</span>
-                                  )}
-                                  <div style={{ ...S.radio, borderColor: active ? '#558B2F' : '#D1D5DB', background: active ? '#558B2F' : 'transparent' }}>
-                                    {active && <svg width="10" height="10" fill="none" stroke="#fff" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {data.friBrunch === 'custom_brunch' && (
-                            <div style={{ marginTop:12 }}>
-                              <p style={S.bodyLabel}>Pick brunch — applies to all {friDays.length} Fridays</p>
-                              <FriMenu
-                                items={MENU_BY_DATE[dateKey(friDays[0])]?.brunch || []}
-                                selected={data.friSelection}
-                                onSelect={id => update(kid, d => ({ ...d, friSelection: id }))}
-                              />
-                            </div>
-                          )}
-                        </>);
-                      })()}
-                    </>
-                  )}
-                  </> /* end data.classGroup wrapper */}
 
                   {/* ── Allergies & Dietary ── */}
                   <p style={{ ...S.bodyLabel, marginTop: data.classGroup ? 20 : 16 }}>
@@ -434,9 +325,41 @@ export default function PlaceOrderPage() {
   );
 }
 
+// ── MealDots ──────────────────────────────────────────────────────────────────
+// Two stacked circles on the left of a calendar cell: breakfast (top) + lunch
+// (bottom). Each fills with its meal colour once that meal is picked for the day.
+// Fridays are brunch-only → a single olive dot.
+
+function Dot({ filled, color }) {
+  return (
+    <span style={{
+      width:7, height:7, borderRadius:'50%', boxSizing:'border-box',
+      border:`1.5px solid ${filled ? color : '#D1D5DB'}`,
+      background: filled ? color : 'transparent',
+      transition:'all 120ms', display:'block',
+    }} />
+  );
+}
+
+function MealDots({ isFri, sel }) {
+  const chef = sel?.mode === 'chef'; // Chef's Choice covers the whole day
+  return (
+    <span style={{ position:'absolute', left:3, top:'50%', transform:'translateY(-50%)', display:'flex', flexDirection:'column', gap:3 }}>
+      {isFri ? (
+        <Dot filled={chef || !!sel?.brunch} color="#558B2F" />
+      ) : (
+        <>
+          <Dot filled={chef || !!sel?.breakfast} color="#D97706" />
+          <Dot filled={chef || !!sel?.lunch}     color="#2563EB" />
+        </>
+      )}
+    </span>
+  );
+}
+
 // ── DateCalendar ──────────────────────────────────────────────────────────────
 
-function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
+function DateCalendar({ kid, classGroup, dateSelections, onSelect, onSetDate }) {
   const [openDate, setOpenDate] = useState(null);
   const availableDays = getAvailableDays(classGroup);
 
@@ -448,9 +371,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
     return () => { document.body.style.overflow = prev; };
   }, [openDate]);
 
-  const totalSelected = Object.keys(dateSelections).filter(k => {
-    const s = dateSelections[k]; return s && Object.keys(s).length > 0;
-  }).length;
+  const totalSelected = Object.values(dateSelections).filter(isDatePicked).length;
 
   return (
     <div style={{ marginTop:14 }}>
@@ -463,18 +384,15 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
 
       {/* Calendar grid */}
       <div style={{ background:'#F9FAFB', borderRadius:12, padding:'12px 10px', marginBottom:14 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:3, marginBottom:3 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(5, 1fr)', gap:3, marginBottom:3 }}>
           {GRID_H.map(d => (
-            <div key={d} style={{ textAlign:'center', fontSize:10, fontWeight:700, color: d==='Sat'||d==='Sun' ? '#E5E7EB' : '#9CA3AF', padding:'2px 0' }}>{d}</div>
+            <div key={d} style={{ textAlign:'center', fontSize:10, fontWeight:700, color:'#9CA3AF', padding:'2px 0' }}>{d}</div>
           ))}
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:3 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(5, 1fr)', gap:3 }}>
           {CELLS.map((date, i) => {
             if (!date) return <div key={i} />;
             const dow      = new Date(2026, 5, date).getDay();
-            const weekend  = dow === 0 || dow === 6;
-            if (weekend) return <div key={i} />;
-
             const info      = getHolidayInfo(classGroup, date);
             const available = isDateAvailable(classGroup, date);
             const isFri     = dow === 5;
@@ -483,8 +401,9 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
               const isBreak = info.type === 'break';
               const accent  = isBreak ? '#D97706' : '#DC2626';
               const hKey    = dateKey(date);
-              const hHasSel = Object.keys(dateSelections[hKey] || {}).length > 0;
+              const hSel    = dateSelections[hKey] || {};
               const hOpen   = openDate === date;
+              const hFri    = dow === 5;
               // Holidays are no longer hard-blocked — tappable to order with a warning.
               return (
                 <button key={i} title={`${info.name} — holiday, tap to order anyway`}
@@ -492,25 +411,21 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
                   style={{ position:'relative', aspectRatio:'1', borderRadius:7,
                     background: isBreak ? '#FFFBEB' : '#FFF5F5',
                     border:`${hOpen ? '1.5px' : '1px'} solid ${hOpen ? accent : (isBreak ? '#FDE68A' : '#FECACA')}`,
-                    cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1, padding:'2px 1px',
+                    cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1, padding:'2px 1px 2px 11px',
                     transition:'all 120ms', touchAction:'manipulation',
                   }}>
+                  <MealDots isFri={hFri} sel={hSel} />
                   <span style={{ fontSize:11, color: accent, fontWeight:700, lineHeight:1 }}>{date}</span>
                   <span style={{ fontSize:8, color: accent, fontWeight:600, lineHeight:1, textAlign:'center', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', padding:'0 1px' }}>
                     {info.short}
                   </span>
-                  {hHasSel && (
-                    <span style={{ position:'absolute', top:-5, right:-5, width:16, height:16, borderRadius:'50%', background:accent, border:'1.5px solid #fff', boxShadow:'0 1px 2px rgba(0,0,0,0.15)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                      <svg width="9" height="9" fill="none" stroke="#fff" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                    </span>
-                  )}
                 </button>
               );
             }
 
             const key    = dateKey(date);
             const sel    = dateSelections[key] || {};
-            const hasSel = Object.keys(sel).length > 0;
+            const hasSel = isDatePicked(sel);
             const isOpen = openDate === date;
 
             return (
@@ -520,23 +435,13 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
                   aspectRatio:'1', borderRadius:7,
                   border:`1.5px solid ${isOpen ? (isFri?'#558B2F':'#1B5E20') : hasSel ? (isFri?'#B7D7A8':'#C8E6C9') : '#E5E7EB'}`,
                   background: isOpen ? (isFri?'#F1F8E9':'#E8F5E9') : hasSel ? '#F0FDF4' : '#fff',
-                  cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, padding:2,
+                  cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, padding:'2px 2px 2px 11px',
                   transition:'all 120ms',
                 }}>
+                <MealDots isFri={isFri} sel={sel} />
                 <span style={{ fontSize:12, fontWeight: isOpen||hasSel ? 700 : 500, color: isOpen||hasSel ? (isFri?'#558B2F':'#1B5E20') : '#374151' }}>
                   {date}
                 </span>
-                {hasSel && (
-                  <span style={{
-                    position:'absolute', top:-5, right:-5,
-                    width:16, height:16, borderRadius:'50%',
-                    background: isFri ? '#558B2F' : '#1B5E20',
-                    border:'1.5px solid #fff', boxShadow:'0 1px 2px rgba(0,0,0,0.15)',
-                    display:'flex', alignItems:'center', justifyContent:'center',
-                  }}>
-                    <svg width="9" height="9" fill="none" stroke="#fff" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                  </span>
-                )}
               </button>
             );
           })}
@@ -545,9 +450,11 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
 
       {/* Legend */}
       <div style={{ display:'flex', gap:12, marginBottom:12, fontSize:11, color:'#9CA3AF', flexWrap:'wrap' }}>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#D97706', display:'inline-block' }} /> Breakfast</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#2563EB', display:'inline-block' }} /> Lunch</span>
+        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:'50%', background:'#558B2F', display:'inline-block' }} /> Fri brunch</span>
         <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFFBEB', border:'1px solid #FDE68A', display:'inline-block' }} /> Term break</span>
         <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#FFF5F5', border:'1px solid #FECACA', display:'inline-block' }} /> Public holiday</span>
-        <span style={{ display:'flex', alignItems:'center', gap:3 }}><span style={{ width:8, height:8, borderRadius:2, background:'#F0FDF4', border:'1px solid #C8E6C9', display:'inline-block' }} /> Selected</span>
       </div>
 
       {/* Holiday / break list */}
@@ -591,37 +498,36 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
       })()}
 
       <p style={{ fontSize:12, color:'#9CA3AF', textAlign:'center' }}>
-        Tap any date — including holidays — to pick its menu. Holiday orders show a reminder and a Chef's Choice shortcut.
+        Tap any date to choose <strong>Chef's Choice</strong> or pick the menu yourself. Holidays are tappable too.
       </p>
 
       {/* Date menu — bottom-sheet popup so parents don't have to scroll */}
       {openDate && (() => {
-        const isFri = isFridayDate(openDate);
-        const key   = dateKey(openDate);
-        const dayM  = MENU_BY_DATE[key];
-        const sel   = dateSelections[key] || {};
-        const hasSel = Object.keys(sel).length > 0;
+        const isFri  = isFridayDate(openDate);
+        const key    = dateKey(openDate);
+        const dayM   = MENU_BY_DATE[key];
+        const sel    = dateSelections[key] || {};
+        const mode   = sel.mode || null;          // 'chef' | 'custom' | null (not chosen yet)
+        const hasSel = isDatePicked(sel);
+        const chefPrice = isFri ? CHEFS_BRUNCH : CHEFS_PRICE.chefs_both;
 
         const holiday   = getHolidayInfo(classGroup, openDate);
         const isHoliday = !!holiday && !isDateAvailable(classGroup, openDate);
         const hAccent   = !isHoliday ? (isFri ? '#558B2F' : '#1B5E20')
                                      : (holiday.type === 'break' ? '#D97706' : '#DC2626');
 
-        const close = () => setOpenDate(null);
-        const clear = () => Object.keys(sel).forEach(type => onSelect(key, type, null));
+        const close       = () => setOpenDate(null);
+        const clear       = () => onSetDate(key, null);
+        const chooseChef  = () => onSetDate(key, { mode: 'chef' });
+        const chooseCustom = () => onSetDate(key, mode === 'custom' ? sel : { mode: 'custom' });
 
-        // Chef's Choice auto-fill: pick the first item of each meal for this day.
-        const applyChefsChoice = () => {
-          if (isFri) {
-            const first = dayM?.brunch?.[0];
-            if (first) onSelect(key, 'brunch', first.id);
-          } else {
-            const bf = dayM?.breakfast?.[0];
-            const ln = dayM?.lunch?.[0];
-            if (bf) onSelect(key, 'breakfast', bf.id);
-            if (ln) onSelect(key, 'lunch', ln.id);
-          }
-        };
+        // Two big option cards at the top of the sheet
+        const modeCardStyle = (active, color, tint) => ({
+          flex:1, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:3,
+          padding:'12px', borderRadius:11, cursor:'pointer', textAlign:'left',
+          border:`2px solid ${active ? color : '#E5E7EB'}`,
+          background: active ? tint : '#fff', touchAction:'manipulation', transition:'all 150ms',
+        });
 
         return (
           <div role="dialog" aria-modal="true" onClick={close} style={S.sheetOverlay}>
@@ -638,7 +544,7 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
                     {isFri && <span style={{ fontSize:11, background:'#F1F8E9', color:'#558B2F', padding:'1px 7px', borderRadius:10, fontWeight:600 }}>Brunch only</span>}
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
-                    {hasSel && (
+                    {mode && (
                       <button onClick={clear} style={{ fontSize:13, color:'#9CA3AF', background:'none', border:'none', cursor:'pointer', padding:'4px 2px' }}>
                         Clear
                       </button>
@@ -654,40 +560,66 @@ function DateCalendar({ kid, classGroup, dateSelections, onSelect }) {
               <div style={S.sheetBody}>
                 {/* Holiday warning — holidays are not blocked, only flagged */}
                 {isHoliday && (
-                  <>
-                    <div style={{ display:'flex', gap:8, alignItems:'flex-start', background: holiday.type==='break' ? '#FFFBEB' : '#FFF5F5', border:`1px solid ${holiday.type==='break' ? '#FDE68A' : '#FECACA'}`, borderRadius:9, padding:'10px 12px', marginBottom:10 }}>
-                      <svg width="16" height="16" fill="none" stroke={hAccent} strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0, marginTop:1 }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A2 2 0 003.83 21h16.34a2 2 0 001.72-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
-                      <div>
-                        <p style={{ margin:0, fontSize:13, fontWeight:700, color:hAccent }}>{holiday.name} — school holiday</p>
-                        <p style={{ margin:'2px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>No classes this day. You can still order if your child will be in — pick below, or let the chef decide.</p>
-                      </div>
+                  <div style={{ display:'flex', gap:8, alignItems:'flex-start', background: holiday.type==='break' ? '#FFFBEB' : '#FFF5F5', border:`1px solid ${holiday.type==='break' ? '#FDE68A' : '#FECACA'}`, borderRadius:9, padding:'10px 12px', marginBottom:12 }}>
+                    <svg width="16" height="16" fill="none" stroke={hAccent} strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0, marginTop:1 }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A2 2 0 003.83 21h16.34a2 2 0 001.72-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                    <div>
+                      <p style={{ margin:0, fontSize:13, fontWeight:700, color:hAccent }}>{holiday.name} — school holiday</p>
+                      <p style={{ margin:'2px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>No classes this day. You can still order if your child will be in.</p>
                     </div>
-                    <button onClick={applyChefsChoice}
-                      style={{ display:'flex', alignItems:'center', gap:8, width:'100%', background:'#1B5E20', color:'#fff', border:'none', borderRadius:9, padding:'11px 12px', fontSize:13, fontWeight:700, cursor:'pointer', marginBottom:14, touchAction:'manipulation' }}>
-                      <svg width="15" height="15" fill="none" stroke="#fff" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0 }}><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
-                      Use Chef's Choice for this day
-                      <span style={{ marginLeft:'auto', fontSize:11, fontWeight:500, opacity:0.85 }}>kitchen decides</span>
-                    </button>
-                  </>
+                  </div>
                 )}
 
-                {isFri ? (
-                  <MealItems title="Brunch" items={dayM?.brunch || []} selected={sel.brunch} accentColor="#558B2F"
-                    onSelect={id => onSelect(key, 'brunch', id === sel.brunch ? null : id)} />
-                ) : (
-                  <>
-                    <MealItems title="Breakfast (optional)" items={dayM?.breakfast || []} selected={sel.breakfast} accentColor="#D97706"
-                      onSelect={id => onSelect(key, 'breakfast', id === sel.breakfast ? null : id)} />
-                    <div style={{ marginTop:12 }}>
-                      <MealItems title="Lunch (optional)" items={dayM?.lunch || []} selected={sel.lunch} accentColor="#2563EB"
-                        onSelect={id => onSelect(key, 'lunch', id === sel.lunch ? null : id)} />
-                    </div>
-                    {sel.breakfast && sel.lunch && (
-                      <p style={{ fontSize:11, color:'#16A34A', fontWeight:600, marginTop:8 }}>
-                        ✓ Combo — RM 1.00 discount applied
-                      </p>
-                    )}
-                  </>
+                {/* Step 1: how to order this day */}
+                <div style={{ display:'flex', gap:10, marginBottom: mode ? 16 : 4 }}>
+                  <button onClick={chooseChef} aria-pressed={mode==='chef'} style={modeCardStyle(mode==='chef', '#1B5E20', '#F0FDF4')}>
+                    <svg width="20" height="20" fill="none" stroke={mode==='chef' ? '#1B5E20' : '#9CA3AF'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
+                    <span style={{ fontWeight:700, fontSize:14, color: mode==='chef' ? '#1B5E20' : '#111827' }}>Chef's Choice</span>
+                    <span style={{ fontSize:11, color:'#6B7280' }}>Kitchen decides · {fmt(chefPrice)}</span>
+                  </button>
+                  <button onClick={chooseCustom} aria-pressed={mode==='custom'} style={modeCardStyle(mode==='custom', '#2563EB', '#EFF6FF')}>
+                    <svg width="20" height="20" fill="none" stroke={mode==='custom' ? '#2563EB' : '#9CA3AF'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" /></svg>
+                    <span style={{ fontWeight:700, fontSize:14, color: mode==='custom' ? '#2563EB' : '#111827' }}>I'll Choose</span>
+                    <span style={{ fontSize:11, color:'#6B7280' }}>Pick the menu</span>
+                  </button>
+                </div>
+
+                {/* Nudge when nothing chosen yet */}
+                {!mode && (
+                  <p style={{ fontSize:12, color:'#9CA3AF', textAlign:'center', margin:'10px 0 2px' }}>
+                    Choose how you'd like to order {dayLabel(openDate)}.
+                  </p>
+                )}
+
+                {/* Step 2a: Chef's Choice confirmation */}
+                {mode === 'chef' && (
+                  <div style={{ display:'flex', gap:8, alignItems:'center', background:'#F0FDF4', border:'1px solid #C8E6C9', borderRadius:10, padding:'12px' }}>
+                    <svg width="18" height="18" fill="none" stroke="#16A34A" strokeWidth="2.5" viewBox="0 0 24 24" style={{ flexShrink:0 }}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    <p style={{ margin:0, fontSize:13, color:'#166534', lineHeight:1.45 }}>
+                      <strong>Chef's Choice set.</strong> Our kitchen prepares {isFri ? 'brunch' : 'breakfast &amp; lunch'} for this day — <strong>{fmt(chefPrice)}</strong>.
+                    </p>
+                  </div>
+                )}
+
+                {/* Step 2b: pick from the menu */}
+                {mode === 'custom' && (
+                  isFri ? (
+                    <MealItems title="Brunch" items={dayM?.brunch || []} selected={sel.brunch} accentColor="#558B2F"
+                      onSelect={id => onSelect(key, 'brunch', id === sel.brunch ? null : id)} />
+                  ) : (
+                    <>
+                      <MealItems title="Breakfast (optional)" items={dayM?.breakfast || []} selected={sel.breakfast} accentColor="#D97706"
+                        onSelect={id => onSelect(key, 'breakfast', id === sel.breakfast ? null : id)} />
+                      <div style={{ marginTop:12 }}>
+                        <MealItems title="Lunch (optional)" items={dayM?.lunch || []} selected={sel.lunch} accentColor="#2563EB"
+                          onSelect={id => onSelect(key, 'lunch', id === sel.lunch ? null : id)} />
+                      </div>
+                      {sel.breakfast && sel.lunch && (
+                        <p style={{ fontSize:11, color:'#16A34A', fontWeight:600, marginTop:8 }}>
+                          ✓ Combo — RM 1.00 discount applied
+                        </p>
+                      )}
+                    </>
+                  )
                 )}
               </div>
 
@@ -733,12 +665,6 @@ function MealItems({ title, items, selected, onSelect, accentColor }) {
       </div>
     </div>
   );
-}
-
-// ── FriMenu (custom brunch for Chef's Choice flow) ────────────────────────────
-
-function FriMenu({ items, selected, onSelect }) {
-  return <MealItems title="Choose brunch — same for all Fridays" items={items} selected={selected} onSelect={onSelect} accentColor="#558B2F" />;
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
