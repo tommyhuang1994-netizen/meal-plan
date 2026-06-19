@@ -40,14 +40,43 @@ function isDatePicked(sel) {
   return !!sel.chefBoth || mealPicked(sel.breakfast) || mealPicked(sel.lunch) || mealPicked(sel.brunch);
 }
 
-// Whole-month "Chef's Choice Meal Set": every available (non-holiday) day set to
-// both-meals chef — Fridays become chef brunch. Used by the promo toggle.
-function buildMealSetSelections(classGroup) {
+// Build whole-month selections from the bulk toggles. `both` = Chef's Choice
+// Meal Set (both meals); `bf`/`ln` = single-meal sets. Either single-meal set (or
+// the both set) also covers Friday brunch. Holidays are excluded by getAvailableDays.
+function buildWholeMonth(classGroup, { both = false, bf = false, ln = false }) {
   const ds = {};
   for (const day of getAvailableDays(classGroup)) {
-    ds[dateKey(day)] = isFridayDate(day) ? { brunch: { mode: 'chef' } } : { chefBoth: true };
+    const k = dateKey(day);
+    if (isFridayDate(day)) {
+      if (both || bf || ln) ds[k] = { brunch: { mode: 'chef' } };
+    } else if (both) {
+      ds[k] = { chefBoth: true };
+    } else {
+      const e = {};
+      if (bf) e.breakfast = { mode: 'chef' };
+      if (ln) e.lunch = { mode: 'chef' };
+      if (e.breakfast || e.lunch) ds[k] = e;
+    }
   }
   return ds;
+}
+
+// True when the manual per-date picks already cover the whole month as both-meals
+// chef (weekday chefBoth, Friday chef brunch) and nothing outside the available
+// days — i.e. the parent has effectively built the Chef's Choice Meal Set.
+function isWholeMonthBoth(classGroup, ds) {
+  const avail = getAvailableDays(classGroup);
+  if (avail.length === 0) return false;
+  for (const day of avail) {
+    const sel = ds[dateKey(day)];
+    if (isFridayDate(day)) { if (sel?.brunch?.mode !== 'chef') return false; }
+    else if (!sel?.chefBoth) return false;
+  }
+  const availKeys = new Set(avail.map(dateKey));
+  for (const k of Object.keys(ds)) {
+    if (isDatePicked(ds[k]) && !availKeys.has(k)) return false; // extra (e.g. holiday) pick
+  }
+  return true;
 }
 
 // ── Calendar helpers ──────────────────────────────────────────────────────────
@@ -85,7 +114,9 @@ const ALLERGY_OPTIONS = [
 
 const initChild = () => ({
   classGroup:     null,
-  mealSet:        false, // Chef's Choice Meal Set — whole-month promo (flat price)
+  mealSet:        false, // Chef's Choice Meal Set — whole-month both-meals promo
+  bfSet:          false, // whole-month Chef's Choice breakfast (+ Friday brunch)
+  lnSet:          false, // whole-month Chef's Choice lunch (+ Friday brunch)
   dateSelections: {},    // { "2026-06-22": { chefBoth?, breakfast?, lunch?, brunch? } }
   allergies:      {},    // { peanuts: true, noSpicy: true, ... }
   allergyNote:    '',    // free-text for "Other"
@@ -154,6 +185,22 @@ export default function PlaceOrderPage() {
   function update(kid, fn) {
     setChildData(prev => ({ ...prev, [kid]: fn(prev[kid]) }));
   }
+
+  // Toggle the whole-month Meal Set (both meals, promo) — exclusive with the
+  // single-meal sets.
+  const toggleMealSet = (kid) => update(kid, d => d.mealSet
+    ? { ...d, mealSet: false, bfSet: false, lnSet: false, dateSelections: {} }
+    : { ...d, mealSet: true, bfSet: false, lnSet: false, dateSelections: buildWholeMonth(d.classGroup, { both: true }) });
+
+  // Toggle a whole-month single-meal set ('bf' | 'ln'). Breakfast and lunch are
+  // mutually exclusive here — wanting both means the Chef's Choice Meal Set. Any
+  // single-meal set also turns the both-meals promo off.
+  const toggleMealMonth = (kid, which) => update(kid, d => {
+    const on = which === 'bf' ? !d.bfSet : !d.lnSet;
+    const bf = which === 'bf' && on;
+    const ln = which === 'ln' && on;
+    return { ...d, mealSet: false, bfSet: bf, lnSet: ln, dateSelections: buildWholeMonth(d.classGroup, { bf, ln }) };
+  });
 
   const allCalcs   = Object.fromEntries(KIDS.map(k => [k, calcChild(childData[k])]));
   const grandTotal = KIDS.reduce((s, k) => s + allCalcs[k].total, 0);
@@ -264,10 +311,20 @@ export default function PlaceOrderPage() {
                     <MealSetCard
                       active={data.mealSet}
                       days={getClassDays(data.classGroup).all.length}
-                      onToggle={() => update(kid, d => d.mealSet
-                        ? { ...d, mealSet: false, dateSelections: {} }
-                        : { ...d, mealSet: true, dateSelections: buildMealSetSelections(d.classGroup) })}
+                      onToggle={() => toggleMealSet(kid)}
                     />
+                  )}
+
+                  {/* Single-meal whole-month sets — for parents who only want one
+                      meal. Either one also covers Friday brunch. */}
+                  {data.classGroup && (
+                    <div style={{ display:'flex', flexDirection:'column', gap:8, margin:'8px 0 4px' }}>
+                      <p style={{ fontSize:11, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.05em', margin:0 }}>
+                        {t('order.orSingleMeal')}
+                      </p>
+                      <MealMonthToggle active={data.bfSet} accent="#D97706" name={t('order.setBreakfastAll')} sub={t('order.setMealCovers')} onToggle={() => toggleMealMonth(kid, 'bf')} />
+                      <MealMonthToggle active={data.lnSet} accent="#2563EB" name={t('order.setLunchAll')}     sub={t('order.setMealCovers')} onToggle={() => toggleMealMonth(kid, 'ln')} />
+                    </div>
                   )}
 
                   {data.classGroup && (
@@ -277,8 +334,10 @@ export default function PlaceOrderPage() {
                       onSetDate={(key, next) => update(kid, d => {
                         const ds = { ...d.dateSelections };
                         if (next == null) delete ds[key]; else ds[key] = next;
-                        // Editing any single day drops the whole-month promo → per-day pricing.
-                        return { ...d, dateSelections: ds, mealSet: false };
+                        // Auto-detect the Meal Set: if manual picks now cover the whole
+                        // month as both-meals chef, treat it as the promo. Otherwise it's
+                        // per-day pricing. Single-meal sets always drop on a manual edit.
+                        return { ...d, dateSelections: ds, mealSet: isWholeMonthBoth(d.classGroup, ds), bfSet: false, lnSet: false };
                       })}
                     />
                   )}
@@ -437,6 +496,29 @@ function MealSetCard({ active, days, onToggle }) {
         {active ? t('order.monthlyActive') : t('order.monthlyHint')}
       </p>
     </div>
+  );
+}
+
+// ── MealMonthToggle ───────────────────────────────────────────────────────────
+// Compact whole-month single-meal switch (breakfast or lunch). The grand-total
+// bar reflects the actual cost, so no price is shown here.
+
+function MealMonthToggle({ active, name, sub, accent, onToggle }) {
+  return (
+    <button onClick={onToggle} aria-pressed={active} style={{
+      display:'flex', alignItems:'center', gap:12, width:'100%', textAlign:'left',
+      padding:'12px 14px', borderRadius:11, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
+      border:`2px solid ${active ? accent : '#E5E7EB'}`, background:'#fff',
+    }}>
+      <div style={{ flex:1, minWidth:0 }}>
+        <span style={{ fontWeight:700, fontSize:14, color: active ? accent : '#111827' }}>{name}</span>
+        <p style={{ margin:'2px 0 0', fontSize:11.5, color:'#6B7280', lineHeight:1.35 }}>{sub}</p>
+      </div>
+      <span style={{ flexShrink:0, width:40, height:24, borderRadius:20, padding:2, display:'flex', alignItems:'center',
+        justifyContent: active ? 'flex-end' : 'flex-start', background: active ? accent : '#E5E7EB', transition:'all 150ms' }}>
+        <span style={{ width:20, height:20, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)' }} />
+      </span>
+    </button>
   );
 }
 
@@ -612,7 +694,12 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
           const next = { ...sel };
           delete next.chefBoth;
           if (val == null) delete next[slot]; else next[slot] = val;
-          const hasAny = next.breakfast || next.lunch || next.brunch;
+          // Auto-collapse to "Both Meals" once breakfast AND lunch are both Chef's
+          // Choice — flips the Both toggle on (same price as 4 + 6).
+          if (!isFri && next.breakfast?.mode === 'chef' && next.lunch?.mode === 'chef') {
+            delete next.breakfast; delete next.lunch; next.chefBoth = true;
+          }
+          const hasAny = next.chefBoth || next.breakfast || next.lunch || next.brunch;
           onSetDate(key, hasAny ? next : null);
         };
         const setChef   = (slot) => applyMeal(slot, sel[slot]?.mode === 'chef' ? null : { mode: 'chef' });
