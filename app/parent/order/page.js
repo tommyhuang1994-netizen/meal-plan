@@ -79,6 +79,16 @@ function isWholeMonthBoth(classGroup, ds) {
   return true;
 }
 
+// Drop every Friday key — the "I'll choose" (custom) plan doesn't offer Friday
+// brunch, so its selections must never carry one (e.g. left over from a Chef plan).
+function stripFridays(ds) {
+  const out = {};
+  for (const k of Object.keys(ds)) {
+    if (!isFridayDate(parseInt(k.split('-')[2], 10))) out[k] = ds[k];
+  }
+  return out;
+}
+
 // ── Calendar helpers ──────────────────────────────────────────────────────────
 
 // Weekday-only (Mon–Fri) calendar — weekends are excluded entirely.
@@ -114,9 +124,10 @@ const ALLERGY_OPTIONS = [
 
 const initChild = () => ({
   classGroup:     null,
-  mealSet:        false, // Chef's Choice Meal Set — whole-month both-meals promo
-  bfSet:          false, // whole-month Chef's Choice breakfast (+ Friday brunch)
-  lnSet:          false, // whole-month Chef's Choice lunch (+ Friday brunch)
+  mealSet:        false, // plan: Chef's Choice Meal Set — both meals, whole-month promo
+  bfSet:          false, // plan: Chef's Choice breakfast, whole month (+ Friday brunch)
+  lnSet:          false, // plan: Chef's Choice lunch, whole month (+ Friday brunch)
+  illChoose:      false, // plan: I'll choose — manual per-date picks
   dateSelections: {},    // { "2026-06-22": { chefBoth?, breakfast?, lunch?, brunch? } }
   allergies:      {},    // { peanuts: true, noSpicy: true, ... }
   allergyNote:    '',    // free-text for "Other"
@@ -186,20 +197,15 @@ export default function PlaceOrderPage() {
     setChildData(prev => ({ ...prev, [kid]: fn(prev[kid]) }));
   }
 
-  // Toggle the whole-month Meal Set (both meals, promo) — exclusive with the
-  // single-meal sets.
-  const toggleMealSet = (kid) => update(kid, d => d.mealSet
-    ? { ...d, mealSet: false, bfSet: false, lnSet: false, dateSelections: {} }
-    : { ...d, mealSet: true, bfSet: false, lnSet: false, dateSelections: buildWholeMonth(d.classGroup, { both: true }) });
-
-  // Toggle a whole-month single-meal set ('bf' | 'ln'). Breakfast and lunch are
-  // mutually exclusive here — wanting both means the Chef's Choice Meal Set. Any
-  // single-meal set also turns the both-meals promo off.
-  const toggleMealMonth = (kid, which) => update(kid, d => {
-    const on = which === 'bf' ? !d.bfSet : !d.lnSet;
-    const bf = which === 'bf' && on;
-    const ln = which === 'ln' && on;
-    return { ...d, mealSet: false, bfSet: bf, lnSet: ln, dateSelections: buildWholeMonth(d.classGroup, { bf, ln }) };
+  // Pick a meal plan (radio, mutually exclusive). Chef plans pre-fill the calendar
+  // so the cells tick automatically; "custom" (I'll choose) opens it empty.
+  const selectPlan = (kid, plan) => update(kid, d => {
+    if (plan === 'meal_set') return { ...d, mealSet: true,  bfSet: false, lnSet: false, illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { both: true }) };
+    if (plan === 'bf')       return { ...d, mealSet: false, bfSet: true,  lnSet: false, illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { bf: true }) };
+    if (plan === 'ln')       return { ...d, mealSet: false, bfSet: false, lnSet: true,  illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { ln: true }) };
+    // custom — keep existing manual picks if already custom, else start empty.
+    // Fridays are dropped: the custom plan offers no Friday brunch.
+    return { ...d, mealSet: false, bfSet: false, lnSet: false, illChoose: true, dateSelections: stripFridays(d.illChoose ? d.dateSelections : {}) };
   });
 
   const allCalcs   = Object.fromEntries(KIDS.map(k => [k, calcChild(childData[k])]));
@@ -305,39 +311,52 @@ export default function PlaceOrderPage() {
                     <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'16px 0' }}>{t('order.selectClassPrompt')}</p>
                   )}
 
-                  {/* Chef's Choice Meal Set — whole-month promo. Fills the calendar
-                      with both-meals chef on every available day (holidays excluded). */}
-                  {data.classGroup && (
-                    <MealSetCard
-                      active={data.mealSet}
-                      days={getClassDays(data.classGroup).all.length}
-                      onToggle={() => toggleMealSet(kid)}
-                    />
+                  {/* Meal plan — radio list. Picking any Chef's Choice plan fills the
+                      calendar (cells auto-tick); "I'll choose" opens it empty. */}
+                  {data.classGroup && (() => {
+                    const { all, nonFri, fri } = getClassDays(data.classGroup);
+                    const mealSetTotal = all.length * MEAL_SET_DAILY_PRICE;
+                    const bfTotal = nonFri.length * CHEFS_PRICE.chefs_bf + fri.length * CHEFS_BRUNCH;
+                    const lnTotal = nonFri.length * CHEFS_PRICE.chefs_ln + fri.length * CHEFS_BRUNCH;
+                    const selected = data.mealSet ? 'meal_set' : data.bfSet ? 'bf' : data.lnSet ? 'ln' : data.illChoose ? 'custom' : null;
+                    return (
+                      <div style={{ display:'flex', flexDirection:'column', gap:8, margin:'8px 0 4px' }}>
+                        <p style={S.bodyLabel}>{t('order.choosePlan')}</p>
+                        <PlanRow active={selected === 'meal_set'} title={t('order.chefsChoice')} sub={t('order.planBothNote')} promo
+                          perDay={t('order.perDay', { rate: fmt(MEAL_SET_DAILY_PRICE) })} monthly={t('order.perMonth', { total: fmt(mealSetTotal) })}
+                          onPick={() => selectPlan(kid, 'meal_set')} />
+                        <PlanRow active={selected === 'bf'} title={t('order.chefsChoice')} sub={t('order.planBfNote')}
+                          perDay={t('order.perDay', { rate: fmt(CHEFS_PRICE.chefs_bf) })} monthly={t('order.perMonth', { total: fmt(bfTotal) })}
+                          onPick={() => selectPlan(kid, 'bf')} />
+                        <PlanRow active={selected === 'ln'} title={t('order.chefsChoice')} sub={t('order.planLnNote')}
+                          perDay={t('order.perDay', { rate: fmt(CHEFS_PRICE.chefs_ln) })} monthly={t('order.perMonth', { total: fmt(lnTotal) })}
+                          onPick={() => selectPlan(kid, 'ln')} />
+                        <PlanRow active={selected === 'custom'} title={t('order.illChoose')} sub={t('order.planCustomNote')}
+                          onPick={() => selectPlan(kid, 'custom')} />
+                      </div>
+                    );
+                  })()}
+
+                  {/* Calendar — appears once a plan is chosen. Chef plans arrive
+                      pre-ticked; "I'll choose" starts empty for manual picks. */}
+                  {data.classGroup && !(data.mealSet || data.bfSet || data.lnSet || data.illChoose) && (
+                    <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'14px 0' }}>{t('order.selectPlanPrompt')}</p>
                   )}
 
-                  {/* Single-meal whole-month sets — for parents who only want one
-                      meal. Either one also covers Friday brunch. */}
-                  {data.classGroup && (
-                    <div style={{ display:'flex', flexDirection:'column', gap:8, margin:'8px 0 4px' }}>
-                      <p style={{ fontSize:11, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.05em', margin:0 }}>
-                        {t('order.orSingleMeal')}
-                      </p>
-                      <MealMonthToggle active={data.bfSet} accent="#D97706" name={t('order.setBreakfastAll')} sub={t('order.setMealCovers')} onToggle={() => toggleMealMonth(kid, 'bf')} />
-                      <MealMonthToggle active={data.lnSet} accent="#2563EB" name={t('order.setLunchAll')}     sub={t('order.setMealCovers')} onToggle={() => toggleMealMonth(kid, 'ln')} />
-                    </div>
-                  )}
-
-                  {data.classGroup && (
+                  {data.classGroup && (data.mealSet || data.bfSet || data.lnSet || data.illChoose) && (
                     <DateCalendar
                       classGroup={data.classGroup}
                       dateSelections={data.dateSelections}
+                      lockFriBrunch={data.bfSet || data.lnSet}
+                      disableFri={data.illChoose}
                       onSetDate={(key, next) => update(kid, d => {
                         const ds = { ...d.dateSelections };
                         if (next == null) delete ds[key]; else ds[key] = next;
-                        // Auto-detect the Meal Set: if manual picks now cover the whole
-                        // month as both-meals chef, treat it as the promo. Otherwise it's
-                        // per-day pricing. Single-meal sets always drop on a manual edit.
-                        return { ...d, dateSelections: ds, mealSet: isWholeMonthBoth(d.classGroup, ds), bfSet: false, lnSet: false };
+                        // A manual edit drops to the "I'll choose" plan, unless the picks
+                        // still cover the whole month as both-meals chef (= Meal Set).
+                        // The custom plan offers no Friday brunch, so strip Fridays then.
+                        const whole = isWholeMonthBoth(d.classGroup, ds);
+                        return { ...d, dateSelections: whole ? ds : stripFridays(ds), mealSet: whole, bfSet: false, lnSet: false, illChoose: !whole };
                       })}
                     />
                   )}
@@ -451,72 +470,39 @@ function MealDots({ isFri, sel }) {
   );
 }
 
-// ── MealSetCard ───────────────────────────────────────────────────────────────
-// Chef's Choice Meal Set — whole-month promo. Toggling it on fills every
-// available school day with both-meals chef (a flat promo price); unlike the old
-// version the calendar stays visible so parents see every day it covers.
+// ── PlanRow ───────────────────────────────────────────────────────────────────
+// One meal-plan radio row: title, descriptive sub, optional per-day + monthly
+// price, an optional PROMO chip, and a radio-style check (plans are mutually
+// exclusive). Picking a row drives the calendar below.
 
-function MealSetCard({ active, days, onToggle }) {
+function PlanRow({ active, title, sub, perDay, monthly, promo, onPick }) {
   const { t } = useT();
+  const accent = '#1B5E20';
   return (
-    <div style={{ margin:'6px 0 4px' }}>
-      <button onClick={onToggle} aria-pressed={active} style={{
-        display:'flex', alignItems:'center', gap:12, width:'100%', textAlign:'left',
-        padding:'14px', borderRadius:12, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
-        border:`2px solid ${active ? '#1B5E20' : '#E5E7EB'}`,
-        background: active ? 'linear-gradient(135deg,#1B5E20 0%,#145A32 100%)' : '#fff',
-      }}>
-        <div style={{ width:40, height:40, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center',
-          background: active ? 'rgba(255,255,255,0.18)' : '#F0FDF4' }}>
-          <svg width="22" height="22" fill="none" stroke={active ? '#fff' : '#1B5E20'} strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3l1.5 3L10 7.5 6.5 9 5 12 3.5 9 0 7.5 3.5 6 5 3zM18 9l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2zM13 14l.9 1.8L16 16.7l-1.9.9L13 19.5l-.9-1.9L10 16.7l1.9-.9L13 14z" /></svg>
-        </div>
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:7, flexWrap:'wrap' }}>
-            <span style={{ fontWeight:700, fontSize:15, color: active ? '#fff' : '#111827' }}>{t('order.monthlyName')}</span>
-            <span style={{ fontSize:10, fontWeight:800, letterSpacing:'0.04em', textTransform:'uppercase', padding:'2px 7px', borderRadius:20,
-              background: active ? 'rgba(255,255,255,0.22)' : '#FEF3C7', color: active ? '#fff' : '#B45309' }}>{t('order.monthlyPromo')}</span>
-          </div>
-          <p style={{ margin:'3px 0 0', fontSize:12, color: active ? 'rgba(255,255,255,0.85)' : '#6B7280', lineHeight:1.4 }}>
-            {active ? t('order.monthlyCovers', { n: days }) : t('order.monthlyDesc')}
-          </p>
-          <p style={{ margin:'4px 0 0', fontSize:13, fontWeight:700, color: active ? '#fff' : '#1B5E20' }}>
-            {fmt(MEAL_SET_DAILY_PRICE * days)}
-            <span style={{ fontWeight:500, fontSize:11, opacity:0.85, marginLeft:6 }}>
-              {t('order.mealSetPerDay', { rate: fmt(MEAL_SET_DAILY_PRICE), n: days })}
-            </span>
-          </p>
-        </div>
-        <span style={{ flexShrink:0, width:44, height:26, borderRadius:20, padding:2, display:'flex', alignItems:'center',
-          justifyContent: active ? 'flex-end' : 'flex-start',
-          background: active ? 'rgba(255,255,255,0.35)' : '#E5E7EB', transition:'all 150ms' }}>
-          <span style={{ width:22, height:22, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)' }} />
-        </span>
-      </button>
-      <p style={{ fontSize:11, color: active ? '#1B5E20' : '#9CA3AF', margin:'6px 2px 0', lineHeight:1.4 }}>
-        {active ? t('order.monthlyActive') : t('order.monthlyHint')}
-      </p>
-    </div>
-  );
-}
-
-// ── MealMonthToggle ───────────────────────────────────────────────────────────
-// Compact whole-month single-meal switch (breakfast or lunch). The grand-total
-// bar reflects the actual cost, so no price is shown here.
-
-function MealMonthToggle({ active, name, sub, accent, onToggle }) {
-  return (
-    <button onClick={onToggle} aria-pressed={active} style={{
+    <button onClick={onPick} aria-pressed={active} style={{
       display:'flex', alignItems:'center', gap:12, width:'100%', textAlign:'left',
-      padding:'12px 14px', borderRadius:11, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
-      border:`2px solid ${active ? accent : '#E5E7EB'}`, background:'#fff',
+      padding:'14px', borderRadius:11, cursor:'pointer', touchAction:'manipulation', transition:'all 150ms',
+      border:`2px solid ${active ? accent : '#E5E7EB'}`, background: active ? '#F0FDF4' : '#F9FAFB',
     }}>
       <div style={{ flex:1, minWidth:0 }}>
-        <span style={{ fontWeight:700, fontSize:14, color: active ? accent : '#111827' }}>{name}</span>
-        <p style={{ margin:'2px 0 0', fontSize:11.5, color:'#6B7280', lineHeight:1.35 }}>{sub}</p>
+        <div style={{ display:'flex', alignItems:'center', gap:7, flexWrap:'wrap' }}>
+          <span style={{ fontWeight:700, fontSize:15, color: active ? accent : '#111827' }}>{title}</span>
+          {promo && (
+            <span style={{ fontSize:10, fontWeight:800, letterSpacing:'0.04em', textTransform:'uppercase', padding:'2px 7px', borderRadius:20,
+              background: active ? '#DCFCE7' : '#FEF3C7', color: active ? '#166534' : '#B45309' }}>{t('order.monthlyPromo')}</span>
+          )}
+        </div>
+        <p style={{ margin:'2px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.35 }}>{sub}</p>
       </div>
-      <span style={{ flexShrink:0, width:40, height:24, borderRadius:20, padding:2, display:'flex', alignItems:'center',
-        justifyContent: active ? 'flex-end' : 'flex-start', background: active ? accent : '#E5E7EB', transition:'all 150ms' }}>
-        <span style={{ width:20, height:20, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)' }} />
+      {perDay && (
+        <div style={{ textAlign:'right', flexShrink:0 }}>
+          <p style={{ margin:0, fontSize:14, fontWeight:800, color: active ? accent : '#111827', fontVariantNumeric:'tabular-nums' }}>{perDay}</p>
+          <p style={{ margin:'1px 0 0', fontSize:11, color:'#9CA3AF', fontVariantNumeric:'tabular-nums' }}>{monthly}</p>
+        </div>
+      )}
+      <span style={{ flexShrink:0, width:24, height:24, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center',
+        border:`2px solid ${active ? accent : '#D1D5DB'}`, background: active ? accent : 'transparent', transition:'all 150ms' }}>
+        {active && <svg width="12" height="12" fill="none" stroke="#fff" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
       </span>
     </button>
   );
@@ -524,7 +510,7 @@ function MealMonthToggle({ active, name, sub, accent, onToggle }) {
 
 // ── DateCalendar ──────────────────────────────────────────────────────────────
 
-function DateCalendar({ classGroup, dateSelections, onSetDate }) {
+function DateCalendar({ classGroup, dateSelections, onSetDate, lockFriBrunch, disableFri }) {
   const { t, lang } = useT();
   const [openDate, setOpenDate] = useState(null);
   const availableDays = getAvailableDays(classGroup);
@@ -562,6 +548,18 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
             const info      = getHolidayInfo(classGroup, date);
             const available = isDateAvailable(classGroup, date);
             const isFri     = dow === 5;
+
+            // "I'll choose" plan: Fridays (brunch) aren't orderable — show as disabled.
+            if (isFri && disableFri) {
+              return (
+                <div key={i} style={{
+                  aspectRatio:'1', borderRadius:7, border:'1px dashed #E5E7EB', background:'#F9FAFB',
+                  display:'flex', alignItems:'center', justifyContent:'center', opacity:0.5,
+                }}>
+                  <span style={{ fontSize:12, color:'#9CA3AF', textDecoration:'line-through' }}>{date}</span>
+                </div>
+              );
+            }
 
             if (!available && info) {
               const isBreak = info.type === 'break';
@@ -613,6 +611,10 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
           })}
         </div>
       </div>
+
+      {disableFri && (
+        <p style={{ fontSize:11, color:'#9CA3AF', margin:'-6px 2px 12px', lineHeight:1.4 }}>{t('order.friCustomDisabled')}</p>
+      )}
 
       {/* Legend */}
       <div style={{ display:'flex', gap:12, marginBottom:12, fontSize:11, color:'#9CA3AF', flexWrap:'wrap' }}>
@@ -717,8 +719,10 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
         });
         const renderSlot = (slot, label, accent, tint, chefRate, items) => {
           const m        = sel[slot];
-          const locked   = !isFri && !!sel.chefBoth;
-          const isChef   = m?.mode === 'chef' || locked; // Both → show chef as picked
+          // Weekday "Both Meals" locks breakfast+lunch; a breakfast-/lunch-only plan
+          // locks Friday brunch — it's bundled as Chef's Choice with no per-day choice.
+          const locked   = (!isFri && !!sel.chefBoth) || (isFri && slot === 'brunch' && lockFriBrunch);
+          const isChef   = m?.mode === 'chef' || locked; // Both / bundled brunch → show chef as picked
           const isCustom = m?.mode === 'custom' && !locked;
           return (
             <div style={{ marginBottom:14, opacity: locked ? 0.4 : 1, pointerEvents: locked ? 'none' : 'auto' }}>
@@ -757,7 +761,7 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
                     {isFri && <span style={{ fontSize:11, background:'#F1F8E9', color:'#558B2F', padding:'1px 7px', borderRadius:10, fontWeight:600 }}>{t('order.brunchOnly')}</span>}
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
-                    {anySel && (
+                    {anySel && !(isFri && lockFriBrunch) && (
                       <button onClick={clear} style={{ fontSize:13, color:'#9CA3AF', background:'none', border:'none', cursor:'pointer', padding:'4px 2px' }}>
                         {t('common.clear')}
                       </button>
@@ -823,7 +827,12 @@ function DateCalendar({ classGroup, dateSelections, onSetDate }) {
 
                 {/* Per-meal chef/custom rows — breakfast + lunch (weekdays) or brunch (Fri) */}
                 {isFri ? (
-                  renderSlot('brunch', t('meal.brunch'), '#558B2F', '#F1F8E9', CHEFS_BRUNCH, dayM?.brunch || [])
+                  <>
+                    {renderSlot('brunch', t('meal.brunch'), '#558B2F', '#F1F8E9', CHEFS_BRUNCH, dayM?.brunch || [])}
+                    {lockFriBrunch && (
+                      <p style={{ fontSize:11, color:'#558B2F', margin:'-4px 2px 0', lineHeight:1.4 }}>{t('order.friBrunchLocked')}</p>
+                    )}
+                  </>
                 ) : (
                   <>
                     {renderSlot('breakfast', t('meal.breakfast'), '#D97706', '#FFF7ED', CHEFS_PRICE.chefs_bf, dayM?.breakfast || [])}
