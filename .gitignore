@@ -1,6 +1,11 @@
 node_modules/
 .env
+.env.local
+.env.*.local
 .vercel/
 .next/
+
+# Local Postgres data dir (npm run db:local)
+.localdb/
 
 .DS_Store

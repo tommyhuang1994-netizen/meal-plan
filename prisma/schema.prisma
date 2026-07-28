@@ -1,0 +1,269 @@
+// Zera meal plan — data model
+// Money is Decimal(10,2) everywhere. Never Float.
+
+// prisma-client-js (not the newer prisma-client) because this project is plain
+// JavaScript: the newer generator emits TypeScript sources, which `node` cannot
+// import directly in the seed script. This one emits JS and is importable from
+// "@prisma/client".
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum Role {
+  PARENT
+  ADMIN
+  VENDOR
+}
+
+enum ClassGroup {
+  CAMBRIDGE
+  HOMESCHOOL
+  PLUS
+  STAFF
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  BRUNCH
+}
+
+/// CHEF = "Chef's Choice", vendor decides the dish.
+/// CUSTOM = parent picked a specific MenuItem.
+enum SelectionMode {
+  CHEF
+  CUSTOM
+}
+
+enum BlockKind {
+  HOLIDAY
+  BREAK
+}
+
+/// How a plan's price is derived.
+/// PER_DAY_RATE  — flat rate charged for each ordered day (chefs_bf, chefs_ln, chefs_both)
+/// PER_STUDY_DAY — promo rate × every available study day in the cycle (chefs_set_daily)
+enum PlanPricing {
+  PER_DAY_RATE
+  PER_STUDY_DAY
+}
+
+enum CycleStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum OrderStatus {
+  DRAFT
+  SUBMITTED
+  CANCELLED
+  PAID
+}
+
+// ── People ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(PARENT)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  students Student[]
+  orders   Order[]
+  sessions Session[]
+}
+
+/// Server-side sessions. The cookie holds this id, never the user id.
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Student {
+  id         String     @id @default(cuid())
+  name       String
+  classGroup ClassGroup
+  year       String?
+  /// Standing allergy flags, e.g. ["peanuts", "noSpicy"]. Keys match ALLERGY_LABELS.
+  allergies  String[]   @default([])
+  parentId   String?
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  parent User?   @relation(fields: [parentId], references: [id], onDelete: SetNull)
+  orders Order[]
+
+  @@index([parentId])
+  @@index([classGroup])
+}
+
+// ── Catalogue ─────────────────────────────────────────────────────────────────
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  mealType    MealType
+  vendorCost  Decimal  @db.Decimal(10, 2)
+  parentPrice Decimal  @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  offerings  MenuOffering[]
+  orderMeals OrderMeal[]
+
+  @@index([mealType])
+}
+
+/// Which items are on offer for a given date + meal. Replaces MENU_BY_DATE.
+model MenuOffering {
+  id         String   @id @default(cuid())
+  date       DateTime @db.Date
+  mealType   MealType
+  menuItemId String
+  sortOrder  Int      @default(0)
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([date, mealType, menuItemId])
+  @@index([date])
+}
+
+/// Dates a class group cannot order for. Replaces BLOCKED_DATES.
+model CalendarBlock {
+  id         String     @id @default(cuid())
+  date       DateTime   @db.Date
+  classGroup ClassGroup
+  kind       BlockKind
+  name       String
+
+  @@unique([date, classGroup])
+  @@index([classGroup])
+}
+
+/// Chef's Choice plans. Replaces CHEFS_PRICING.
+model PlanOption {
+  id          String      @id @default(cuid())
+  code        String      @unique
+  label       String
+  note        String
+  vendorCost  Decimal     @db.Decimal(10, 2)
+  parentPrice Decimal     @db.Decimal(10, 2)
+  pricing     PlanPricing @default(PER_DAY_RATE)
+  active      Boolean     @default(true)
+
+  orders Order[]
+}
+
+/// Tunables that would otherwise be magic numbers in the UI,
+/// e.g. combo_discount = "1.00".
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ── Ordering ──────────────────────────────────────────────────────────────────
+
+/// One orderable month. Replaces the hardcoded June 2026.
+model OrderCycle {
+  id       String      @id @default(cuid())
+  year     Int
+  month    Int
+  status   CycleStatus @default(DRAFT)
+  opensAt  DateTime?
+  closesAt DateTime?
+
+  orders Order[]
+
+  @@unique([year, month])
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  cycleId    String
+  studentId  String
+  parentId   String?
+  classGroup ClassGroup
+  planId     String?
+  status     OrderStatus @default(DRAFT)
+
+  /// Snapshotted at submit. Never recomputed from current prices.
+  subtotal Decimal @default(0) @db.Decimal(10, 2)
+  discount Decimal @default(0) @db.Decimal(10, 2)
+  total    Decimal @default(0) @db.Decimal(10, 2)
+
+  /// What was declared at order time — the vendor reads this, not Student.allergies.
+  allergies   String[] @default([])
+  allergyNote String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  submittedAt DateTime?
+
+  cycle   OrderCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  student Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent  User?       @relation(fields: [parentId], references: [id], onDelete: SetNull)
+  plan    PlanOption? @relation(fields: [planId], references: [id])
+  days    OrderDay[]
+
+  @@unique([cycleId, studentId])
+  @@index([parentId])
+  @@index([status])
+}
+
+/// One ordered date. Pricing lives here because calcChild() prices per date:
+/// a chef_both day is one RM 10.00 line covering two meals, and the combo
+/// discount is a property of the day, not of either meal.
+model OrderDay {
+  id       String   @id @default(cuid())
+  orderId  String
+  date     DateTime @db.Date
+  price    Decimal  @db.Decimal(10, 2)
+  discount Decimal  @default(0) @db.Decimal(10, 2)
+
+  order Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  meals OrderMeal[]
+
+  @@unique([orderId, date])
+  @@index([date])
+}
+
+/// What the student actually eats. The vendor dashboard reads this joined on date.
+model OrderMeal {
+  id         String        @id @default(cuid())
+  orderDayId String
+  mealType   MealType
+  mode       SelectionMode
+  menuItemId String?
+
+  /// Frozen at submit so renaming or repricing a dish never rewrites history.
+  itemNameSnapshot String?
+  unitParentPrice  Decimal @db.Decimal(10, 2)
+  unitVendorCost   Decimal @db.Decimal(10, 2)
+
+  orderDay OrderDay  @relation(fields: [orderDayId], references: [id], onDelete: Cascade)
+  menuItem MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+
+  @@unique([orderDayId, mealType])
+}

@@ -1,0 +1,241 @@
+// Seeds the database from the existing static modules in lib/.
+//
+// This is the bridge off the hardcoded data: lib/menuData.js, lib/pricingData.js
+// and lib/schoolCalendar.js stay as the source of truth for June 2026 until the
+// admin UI can create cycles itself. Idempotent — safe to re-run.
+// Loaded here too so `node prisma/seed.js` works outside the Prisma CLI.
+import { config } from 'dotenv';
+config({ path: ['.env.local', '.env'], quiet: true });
+
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { MENU_BY_DATE } from '../lib/menuData.js';
+import { CHEFS_PRICING, MENU_PRICING } from '../lib/pricingData.js';
+import { CLASS_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
+import { ORDERS } from '../lib/mockOrders.js';
+import { hashPassword } from '../lib/password.js';
+
+// Seeding writes schema-owned rows, so use the direct (unpooled) connection.
+const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+
+const CYCLE_YEAR = 2026;
+const CYCLE_MONTH = 6; // June
+
+const MEAL_TYPE = { Breakfast: 'BREAKFAST', Lunch: 'LUNCH', Brunch: 'BRUNCH' };
+const GROUP = {
+  Cambridge: 'CAMBRIDGE',
+  Homeschool: 'HOMESCHOOL',
+  Plus: 'PLUS',
+  Staff: 'STAFF',
+};
+
+/// @db.Date reads the UTC calendar date off a JS Date. Building with Date.UTC
+/// keeps "2026-06-22" as the 22nd regardless of the machine's timezone.
+const utcDate = (iso) => new Date(`${iso}T00:00:00.000Z`);
+
+// ── Descriptions ──────────────────────────────────────────────────────────────
+// MENU_PRICING has the authoritative prices but no descriptions; MENU_BY_DATE
+// has descriptions. Walk the calendar to collect them.
+function collectDescriptions() {
+  const byName = {};
+  for (const day of Object.values(MENU_BY_DATE)) {
+    for (const items of Object.values(day)) {
+      for (const item of items) {
+        if (!byName[item.name]) byName[item.name] = item.desc;
+      }
+    }
+  }
+  return byName;
+}
+
+async function seedMenuItems() {
+  const descriptions = collectDescriptions();
+  const byName = {};
+
+  for (const [name, price] of Object.entries(MENU_PRICING)) {
+    const item = await prisma.menuItem.upsert({
+      where: { name },
+      update: {
+        description: descriptions[name] ?? '',
+        mealType: MEAL_TYPE[price.type],
+        vendorCost: price.vendorCost,
+        parentPrice: price.parentPrice,
+      },
+      create: {
+        name,
+        description: descriptions[name] ?? '',
+        mealType: MEAL_TYPE[price.type],
+        vendorCost: price.vendorCost,
+        parentPrice: price.parentPrice,
+      },
+    });
+    byName[name] = item;
+  }
+
+  console.log(`  MenuItem       ${Object.keys(byName).length}`);
+  return byName;
+}
+
+async function seedPlans() {
+  for (const plan of CHEFS_PRICING) {
+    const data = {
+      label: plan.label,
+      note: plan.note,
+      vendorCost: plan.vendorCost,
+      parentPrice: plan.parentPrice,
+      // The Meal Set is billed across every study day in the cycle, not per
+      // day the parent picks.
+      pricing: plan.id === 'chefs_set_daily' ? 'PER_STUDY_DAY' : 'PER_DAY_RATE',
+    };
+    await prisma.planOption.upsert({
+      where: { code: plan.id },
+      update: data,
+      create: { code: plan.id, ...data },
+    });
+  }
+  console.log(`  PlanOption     ${CHEFS_PRICING.length}`);
+}
+
+async function seedMenuOfferings(itemsByName) {
+  let count = 0;
+  for (const [iso, meals] of Object.entries(MENU_BY_DATE)) {
+    const date = utcDate(iso);
+    for (const [meal, items] of Object.entries(meals)) {
+      const mealType = MEAL_TYPE[meal[0].toUpperCase() + meal.slice(1)];
+      for (const [i, item] of items.entries()) {
+        const menuItem = itemsByName[item.name];
+        if (!menuItem) continue;
+        await prisma.menuOffering.upsert({
+          where: {
+            date_mealType_menuItemId: { date, mealType, menuItemId: menuItem.id },
+          },
+          update: { sortOrder: i },
+          create: { date, mealType, menuItemId: menuItem.id, sortOrder: i },
+        });
+        count++;
+      }
+    }
+  }
+  console.log(`  MenuOffering   ${count}`);
+}
+
+async function seedCalendarBlocks() {
+  let count = 0;
+  for (const group of Object.keys(CLASS_GROUPS)) {
+    for (const block of getBlockedDaysList(group)) {
+      const date = utcDate(`2026-06-${String(block.date).padStart(2, '0')}`);
+      const data = {
+        kind: block.type === 'break' ? 'BREAK' : 'HOLIDAY',
+        name: block.name,
+      };
+      await prisma.calendarBlock.upsert({
+        where: { date_classGroup: { date, classGroup: GROUP[group] } },
+        update: data,
+        create: { date, classGroup: GROUP[group], ...data },
+      });
+      count++;
+    }
+  }
+  console.log(`  CalendarBlock  ${count}`);
+}
+
+async function seedCycle() {
+  const cycle = await prisma.orderCycle.upsert({
+    where: { year_month: { year: CYCLE_YEAR, month: CYCLE_MONTH } },
+    update: {},
+    create: { year: CYCLE_YEAR, month: CYCLE_MONTH, status: 'OPEN' },
+  });
+  console.log(`  OrderCycle     1 (${CYCLE_YEAR}-${String(CYCLE_MONTH).padStart(2, '0')})`);
+  return cycle;
+}
+
+// ── People ────────────────────────────────────────────────────────────────────
+// Dev credentials only. Replace before this touches a real school.
+async function seedUsers() {
+  const accounts = [
+    { email: 'admin@zera.test',  name: 'School Admin', role: 'ADMIN',  password: 'admin123' },
+    { email: 'vendor@zera.test', name: 'Kitchen Vendor', role: 'VENDOR', password: 'vendor123' },
+    { email: 'parent@zera.test', name: 'Demo Parent',  role: 'PARENT', password: 'parent123' },
+  ];
+
+  const byRole = {};
+  for (const acc of accounts) {
+    const passwordHash = await hashPassword(acc.password);
+    byRole[acc.role] = await prisma.user.upsert({
+      where: { email: acc.email },
+      update: { name: acc.name, role: acc.role },
+      create: { email: acc.email, name: acc.name, role: acc.role, passwordHash },
+    });
+  }
+  console.log(`  User           ${accounts.length}`);
+  return byRole;
+}
+
+/// Roster comes from the mock vendor orders — dedupe the same student appearing
+/// across several weekdays.
+async function seedStudents(parent) {
+  const roster = new Map();
+  for (const day of Object.values(ORDERS)) {
+    for (const row of day) {
+      const existing = roster.get(row.name);
+      if (existing) {
+        for (const a of row.allergies) existing.allergies.add(a);
+        continue;
+      }
+      roster.set(row.name, {
+        name: row.name,
+        classGroup: GROUP[row.dept],
+        year: row.year,
+        allergies: new Set(row.allergies),
+      });
+    }
+  }
+
+  for (const s of roster.values()) {
+    const data = {
+      classGroup: s.classGroup,
+      year: s.year,
+      allergies: [...s.allergies],
+      // Only the two demo kids belong to the demo parent.
+      parentId: ['Ahmad Irfan', 'Nur Aisyah'].includes(s.name) ? parent.id : null,
+    };
+    const found = await prisma.student.findFirst({ where: { name: s.name } });
+    if (found) await prisma.student.update({ where: { id: found.id }, data });
+    else await prisma.student.create({ data: { name: s.name, ...data } });
+  }
+  console.log(`  Student        ${roster.size}`);
+}
+
+async function seedSettings() {
+  const settings = [
+    // RM off when both breakfast and lunch are à-la-carte picks on the same day.
+    { key: 'combo_discount', value: '1.00' },
+    { key: 'currency', value: 'MYR' },
+    { key: 'timezone', value: 'Asia/Kuala_Lumpur' },
+  ];
+  for (const s of settings) {
+    await prisma.setting.upsert({ where: { key: s.key }, update: { value: s.value }, create: s });
+  }
+  console.log(`  Setting        ${settings.length}`);
+}
+
+async function main() {
+  console.log('Seeding…');
+  const items = await seedMenuItems();
+  await seedPlans();
+  await seedMenuOfferings(items);
+  await seedCalendarBlocks();
+  await seedCycle();
+  const users = await seedUsers();
+  await seedStudents(users.PARENT);
+  await seedSettings();
+  console.log('Done.');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());

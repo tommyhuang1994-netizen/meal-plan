@@ -25,9 +25,19 @@ For larger or parallelizable work, see `using-git-worktrees`, `dispatching-paral
 
 ```bash
 npm run dev      # Start Next.js dev server (http://localhost:3000)
-npm run build    # Production build
+npm run build    # Production build (runs `prisma generate` first)
 npm run start    # Start production server
+
+npm run db:local    # Start local Postgres (leave running in its own terminal)
+npm run db:migrate  # Create + apply a migration from schema changes
+npm run db:deploy   # Apply existing migrations (this is what production runs)
+npm run db:seed     # Seed from lib/*.js — idempotent, safe to re-run
+npm run db:studio   # Browse the data in Prisma Studio
+npm run db:reset    # Drop, re-migrate, re-seed
 ```
+
+Requires **Node 22** (see `.nvmrc`) — `nvm use`. Node 20 works for Next but not
+for the local Postgres helper.
 
 No test suite or linter is configured.
 
@@ -43,7 +53,37 @@ This is a **Next.js 16 App Router** project — a school meal plan ordering syst
 | Admin | `/admin` | `admin123` via `sessionStorage` | `/admin/dashboard`, `/admin/menu`, `/admin/prices` |
 | Vendor | `/vendor` | `vendor123` (no session persistence) | `/vendor/dashboard` — view orders by date + print |
 
-### Data layer — all mock/static, no database
+### Database (Postgres + Prisma)
+
+A schema exists and is seeded, but **no page or API route reads from it yet** —
+the UI still renders entirely from the static `lib/*.js` modules below. Porting
+them over is the outstanding work.
+
+- `prisma/schema.prisma` — 12 models. All money is `Decimal(10,2)`, never Float.
+- `prisma/seed.js` — seeds the DB *from* the static `lib/*.js` modules, so those
+  stay the source of truth for June 2026 until an admin UI can create cycles.
+- `lib/db.js` — the `prisma` client singleton. Import this, never construct a client.
+- `lib/password.js` — scrypt hash/verify, no native dependency.
+- `prisma.config.ts` — Prisma 7 keeps the connection URL here, not in the schema.
+
+Prisma 7 specifics that differ from older docs: the client needs a **driver
+adapter** (`PrismaPg`) rather than connecting on its own, and the generator is
+`prisma-client-js` (the newer `prisma-client` emits TypeScript, which this
+plain-JS project cannot import).
+
+Connection URLs: `DATABASE_URL` is pooled and used by the app; `DIRECT_URL` is
+unpooled and used by migrations, which cannot run through pgBouncer.
+
+Key modelling decisions:
+
+- `OrderDay` holds the price, not `OrderMeal` — mirroring `calcChild()`, where a
+  `chef_both` day is one bundled price covering two meals and the combo discount
+  belongs to the day.
+- `OrderMeal` snapshots `itemNameSnapshot` / `unitParentPrice` / `unitVendorCost`
+  so editing prices in `/admin/prices` never rewrites orders already placed.
+- Dates are real `@db.Date` columns built with `Date.UTC` to avoid timezone drift.
+
+### Data layer — static modules the UI still reads from
 
 - `lib/menuData.js` — builds `MENU_BY_DATE` (keyed `"2026-06-DD"`), mapping June 2026 school days to breakfast/lunch/brunch items. Fridays get brunch only; Mon–Thu get breakfast + lunch.
 - `lib/schoolCalendar.js` — exports `CLASS_GROUPS` (Cambridge, Homeschool, Plus), blocked date sets per group (public holidays + term breaks), and helper functions `getAvailableDays`, `isDateAvailable`, `getHolidayInfo`.
