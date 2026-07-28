@@ -9,30 +9,39 @@
 //
 // Leave it running in its own terminal; Ctrl-C stops it.
 import EmbeddedPostgres from 'embedded-postgres';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const dataDir = join(root, '.localdb');
 const PORT = 55432;
 
 const pg = new EmbeddedPostgres({
-  databaseDir: join(root, '.localdb'),
+  databaseDir: dataDir,
   user: 'postgres',
   password: 'postgres',
   port: PORT,
   persistent: true,
 });
 
-await pg.initialise();
+// initialise() shells out to initdb, which errors on a non-empty directory.
+// PG_VERSION is written by initdb, so its presence means the cluster is
+// already set up and we should go straight to starting it.
+const alreadyInitialised = existsSync(join(dataDir, 'PG_VERSION'));
+if (!alreadyInitialised) await pg.initialise();
+
 await pg.start();
 
 // mealplan_shadow is required by `prisma migrate dev`, which needs a throwaway
-// database to diff migrations against.
-for (const db of ['mealplan', 'mealplan_shadow']) {
-  try {
-    await pg.createDatabase(db);
-  } catch {
-    // already exists
+// database to diff migrations against. Both already exist on later runs.
+if (!alreadyInitialised) {
+  for (const db of ['mealplan', 'mealplan_shadow']) {
+    try {
+      await pg.createDatabase(db);
+    } catch {
+      // already exists
+    }
   }
 }
 
