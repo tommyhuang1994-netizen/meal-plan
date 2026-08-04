@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zera Meal Plan — Database Design</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --surface: #ffffff;
+    --line: #e3e2dd;
+    --line-soft: #efeeea;
+    --ink: #1c1b19;
+    --ink-2: #55524c;
+    --ink-3: #8a867e;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --people: #4f5bd5;
+    --people-bg: #eef0fd;
+    --order: #b45309;
+    --order-bg: #fdf3e4;
+    --cat: #0f766e;
+    --cat-bg: #e6f4f1;
+
+    --pk: #7c3aed;
+    --pk-bg: #f2ebfe;
+    --fk: #0369a1;
+    --fk-bg: #e5f2fa;
+    --uq: #a16207;
+    --uq-bg: #fbf2dc;
+    --ix: #57534e;
+    --ix-bg: #eeecea;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #1e1e22;
+      --line: #34343a;
+      --line-soft: #2a2a30;
+      --ink: #ecebe8;
+      --ink-2: #b1aea8;
+      --ink-3: #807d78;
+
+      --people: #a5aefb;
+      --people-bg: #23263f;
+      --order: #f0b45f;
+      --order-bg: #3a2c17;
+      --cat: #5fd3c0;
+      --cat-bg: #17332f;
+
+      --pk: #c4a6ff;
+      --pk-bg: #2c2340;
+      --fk: #7cc4ee;
+      --fk-bg: #16303f;
+      --uq: #e5c46a;
+      --uq-bg: #382f18;
+      --ix: #b5b1ab;
+      --ix-bg: #2c2c31;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #17171a; --surface: #1e1e22; --line: #34343a; --line-soft: #2a2a30;
+    --ink: #ecebe8; --ink-2: #b1aea8; --ink-3: #807d78;
+    --people: #a5aefb; --people-bg: #23263f;
+    --order: #f0b45f; --order-bg: #3a2c17;
+    --cat: #5fd3c0; --cat-bg: #17332f;
+    --pk: #c4a6ff; --pk-bg: #2c2340; --fk: #7cc4ee; --fk-bg: #16303f;
+    --uq: #e5c46a; --uq-bg: #382f18; --ix: #b5b1ab; --ix-bg: #2c2c31;
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfbf9; --surface: #ffffff; --line: #e3e2dd; --line-soft: #efeeea;
+    --ink: #1c1b19; --ink-2: #55524c; --ink-3: #8a867e;
+    --people: #4f5bd5; --people-bg: #eef0fd;
+    --order: #b45309; --order-bg: #fdf3e4;
+    --cat: #0f766e; --cat-bg: #e6f4f1;
+    --pk: #7c3aed; --pk-bg: #f2ebfe; --fk: #0369a1; --fk-bg: #e5f2fa;
+    --uq: #a16207; --uq-bg: #fbf2dc; --ix: #57534e; --ix-bg: #eeecea;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  header.page { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 44px; }
+  .eyebrow {
+    font: 600 11px/1 var(--mono); letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 14px;
+  }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 12px; font-weight: 640; }
+  .lede { color: var(--ink-2); max-width: 68ch; margin: 0; font-size: 16px; }
+
+  .facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+  .fact {
+    border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
+    padding: 9px 13px; font-size: 12.5px; color: var(--ink-2);
+  }
+  .fact b { color: var(--ink); font-weight: 620; }
+
+  h2 {
+    font-size: 13px; font-weight: 660; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--ink-3); margin: 60px 0 20px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft);
+  }
+  h3 { font-size: 18px; margin: 40px 0 14px; letter-spacing: -0.01em; font-weight: 620; }
+  p { color: var(--ink-2); max-width: 74ch; }
+
+  /* ── diagram ─────────────────────────────────────────────── */
+  .map { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px; overflow-x: auto; }
+  .map svg { display: block; min-width: 780px; width: 100%; height: auto; }
+  .n-box { fill: var(--surface); stroke-width: 1.5; rx: 7; }
+  .n-label { font: 600 13px var(--mono); fill: var(--ink); }
+  .n-sub { font: 10.5px var(--mono); fill: var(--ink-3); }
+  .g-rect { fill: none; stroke-dasharray: 3 4; stroke-width: 1; rx: 12; }
+  .g-title { font: 600 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .edge { fill: none; stroke: var(--ink-3); stroke-width: 1.4; }
+  .edge.opt { stroke-dasharray: 5 4; }
+  .card { font: 600 10px var(--mono); fill: var(--ink-2); }
+  .act { font: 9.5px var(--mono); fill: var(--ink-3); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; font-size: 12.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; border: 1.5px solid; }
+  .dashline { width: 26px; height: 0; border-top: 1.4px dashed var(--ink-3); }
+  .solidline { width: 26px; height: 0; border-top: 1.4px solid var(--ink-3); }
+
+  /* ── entity cards ────────────────────────────────────────── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
+  .ent {
+    border: 1px solid var(--line); background: var(--surface); border-radius: 11px;
+    overflow: hidden; border-top: 3px solid var(--accent);
+  }
+  .ent.people { --accent: var(--people); }
+  .ent.order  { --accent: var(--order); }
+  .ent.cat    { --accent: var(--cat); }
+  .ent > header { padding: 13px 13px 12px; border-bottom: 1px solid var(--line-soft); }
+  .ent h4 { margin: 0; font: 620 15px var(--mono); color: var(--accent); letter-spacing: -0.01em; }
+  .ent header p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 13px; border-bottom: 1px solid var(--line-soft); vertical-align: top; font-size: 12.5px; }
+  tr:last-child td { border-bottom: 0; }
+  td.col { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; width: 1%; }
+  td.typ { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); white-space: nowrap; width: 1%; }
+  td.tag { text-align: right; width: 1%; }
+  tr.rel td.col { color: var(--ink-2); }
+  .note {
+    color: var(--ink-3); font-size: 11.5px; display: inline-block;
+    text-align: right; max-width: 130px; overflow-wrap: anywhere;
+  }
+
+  .b {
+    display: inline-block; white-space: nowrap;
+    font: 600 9.5px/1 var(--mono); letter-spacing: .06em;
+    padding: 3px 5px; border-radius: 4px; margin-left: 4px; text-transform: uppercase;
+  }
+  .b-pk { color: var(--pk); background: var(--pk-bg); }
+  .b-fk { color: var(--fk); background: var(--fk-bg); }
+  .b-uq { color: var(--uq); background: var(--uq-bg); }
+  .b-ix { color: var(--ix); background: var(--ix-bg); }
+
+  .ent footer {
+    padding: 10px 13px; background: var(--bg); border-top: 1px solid var(--line-soft);
+    font: 11px/1.7 var(--mono); color: var(--ink-3);
+  }
+  .ent footer b { color: var(--ink-2); font-weight: 600; }
+
+  /* ── enums ───────────────────────────────────────────────── */
+  .enums { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .enum { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 14px 16px; }
+  .enum h5 { margin: 0 0 10px; font: 620 13px var(--mono); color: var(--ink); }
+  .vals { display: flex; flex-wrap: wrap; gap: 5px; }
+  .val { font: 11px var(--mono); padding: 3px 7px; border-radius: 5px; background: var(--line-soft); color: var(--ink-2); }
+  .enum p { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: none; }
+
+  /* ── notes ───────────────────────────────────────────────── */
+  .notes { display: grid; gap: 12px; }
+  .card-note {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent, var(--ink-3));
+    background: var(--surface); border-radius: 0 10px 10px 0; padding: 14px 18px;
+  }
+  .card-note h5 { margin: 0 0 6px; font-size: 14px; font-weight: 620; }
+  .card-note p { margin: 0; font-size: 13.5px; }
+  .card-note code, p code, td code { font: 11.5px var(--mono); background: var(--line-soft); padding: 1.5px 5px; border-radius: 4px; color: var(--ink); }
+  .warn { --accent: var(--order); }
+
+  footer.page { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page">
+  <p class="eyebrow">Zera International School · Meal Plan Ordering</p>
+  <h1>Database design</h1>
+  <p class="lede">
+    Postgres via Prisma 7. Twelve models across three domains — <b>people</b>, the <b>catalogue</b> of what
+    can be ordered, and the <b>orders</b> themselves. Generated from
+    <code>prisma/schema.prisma</code>.
+  </p>
+  <div class="facts">
+    <div class="fact"><b>12</b> models</div>
+    <div class="fact"><b>8</b> enums</div>
+    <div class="fact"><b>10</b> foreign keys</div>
+    <div class="fact">Postgres <b>+ Prisma 7</b> (<code>prisma-client-js</code>, <code>PrismaPg</code> adapter)</div>
+    <div class="fact">Money is <b>Decimal(10,2)</b> — never Float</div>
+    <div class="fact">Migration <b>20260728070122_init</b></div>
+  </div>
+</header>
+
+<h2>Relationship map</h2>
+
+<div class="map">
+<svg viewBox="0 0 900 700" role="img" aria-label="Entity relationship diagram of the twelve models">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <!-- group backdrops -->
+  <rect class="g-rect" x="10"  y="18" width="220" height="350" stroke="var(--people)"/>
+  <text class="g-title" x="10"  y="12" fill="var(--people)">People</text>
+  <rect class="g-rect" x="350" y="18" width="240" height="580" stroke="var(--order)"/>
+  <text class="g-title" x="350" y="12" fill="var(--order)">Ordering</text>
+  <rect class="g-rect" x="670" y="18" width="220" height="670" stroke="var(--cat)"/>
+  <text class="g-title" x="670" y="12" fill="var(--cat)">Catalogue</text>
+
+  <!-- edges (drawn first so boxes sit on top) -->
+  <g color="var(--ink-3)">
+    <!-- User -> Session (up the middle) -->
+    <path class="edge" d="M120,168 L120,96" marker-end="url(#arw)"/>
+    <!-- User -> Student -->
+    <path class="edge" d="M120,208 L120,280" marker-end="url(#arw)"/>
+    <!-- User -> Order (optional parentId) -->
+    <path class="edge opt" d="M200,188 L340,188 L340,318 L372,318" marker-end="url(#arw)"/>
+    <!-- Student -> Order -->
+    <path class="edge" d="M200,308 L310,308 L310,338 L372,338" marker-end="url(#arw)"/>
+    <!-- OrderCycle -> Order -->
+    <path class="edge" d="M540,68 L575,68 L575,328 L548,328" marker-end="url(#arw)"/>
+    <!-- PlanOption -> Order (optional) -->
+    <path class="edge opt" d="M460,188 L460,300" marker-end="url(#arw)"/>
+    <!-- Order -> OrderDay -->
+    <path class="edge" d="M460,348 L460,410" marker-end="url(#arw)"/>
+    <!-- OrderDay -> OrderMeal -->
+    <path class="edge" d="M460,458 L460,520" marker-end="url(#arw)"/>
+    <!-- MenuItem -> OrderMeal (optional) -->
+    <path class="edge opt" d="M700,548 L548,548" marker-end="url(#arw)"/>
+    <!-- MenuItem -> MenuOffering -->
+    <path class="edge" d="M780,568 L780,610" marker-end="url(#arw)"/>
+  </g>
+
+  <!-- cardinality + referential action labels -->
+  <g>
+    <text class="card" x="127" y="160">1</text>
+    <text class="card" x="127" y="108">N</text>
+    <text class="act"  x="132" y="134">cascade</text>
+
+    <text class="card" x="127" y="226">1</text>
+    <text class="card" x="127" y="276">N</text>
+    <text class="act"  x="132" y="254">set null</text>
+
+    <text class="card" x="206" y="182">1</text>
+    <text class="card" x="358" y="314">N</text>
+    <text class="act"  x="246" y="180">parentId</text>
+    <text class="act"  x="246" y="202">set null</text>
+
+    <text class="card" x="206" y="302">1</text>
+    <text class="card" x="358" y="356">N</text>
+    <text class="act"  x="246" y="330">cascade</text>
+
+    <text class="card" x="546" y="62">1</text>
+    <text class="card" x="556" y="322">N</text>
+    <text class="act"  x="566" y="196" transform="rotate(90 566 196)">cycle · cascade</text>
+
+    <text class="card" x="466" y="204">1</text>
+    <text class="card" x="466" y="296">N</text>
+    <text class="act"  x="472" y="252">plan · optional</text>
+
+    <text class="card" x="466" y="364">1</text>
+    <text class="card" x="466" y="406">N</text>
+    <text class="act"  x="472" y="386">cascade</text>
+
+    <text class="card" x="466" y="474">1</text>
+    <text class="card" x="466" y="516">N</text>
+    <text class="act"  x="472" y="496">cascade</text>
+
+    <text class="card" x="686" y="542">1</text>
+    <text class="card" x="556" y="542">N</text>
+    <text class="act"  x="604" y="566">set null</text>
+
+    <text class="card" x="786" y="584">1</text>
+    <text class="card" x="786" y="606">N</text>
+    <text class="act"  x="792" y="597">cascade</text>
+  </g>
+
+  <!-- nodes -->
+  <g>
+    <!-- People -->
+    <rect class="n-box" x="40" y="48" width="160" height="40" stroke="var(--people)" fill="var(--people-bg)"/>
+    <text class="n-label" x="54" y="66">Session</text>
+    <text class="n-sub"   x="54" y="80">cookie → session id</text>
+
+    <rect class="n-box" x="40" y="168" width="160" height="40" stroke="var(--people)" fill="var(--people-bg)"/>
+    <text class="n-label" x="54" y="186">User</text>
+    <text class="n-sub"   x="54" y="200">parent/admin/vendor</text>
+
+    <rect class="n-box" x="40" y="288" width="160" height="40" stroke="var(--people)" fill="var(--people-bg)"/>
+    <text class="n-label" x="54" y="306">Student</text>
+    <text class="n-sub"   x="54" y="320">the child being fed</text>
+
+    <!-- Ordering -->
+    <rect class="n-box" x="380" y="48" width="160" height="40" stroke="var(--order)" fill="var(--order-bg)"/>
+    <text class="n-label" x="394" y="66">OrderCycle</text>
+    <text class="n-sub"   x="394" y="80">one orderable month</text>
+
+    <rect class="n-box" x="380" y="148" width="160" height="40" stroke="var(--order)" fill="var(--order-bg)"/>
+    <text class="n-label" x="394" y="166">PlanOption</text>
+    <text class="n-sub"   x="394" y="180">Chef’s Choice plans</text>
+
+    <rect class="n-box" x="380" y="308" width="160" height="40" stroke="var(--order)" fill="var(--order-bg)"/>
+    <text class="n-label" x="394" y="326">Order</text>
+    <text class="n-sub"   x="394" y="340">one per child/cycle</text>
+
+    <rect class="n-box" x="380" y="418" width="160" height="40" stroke="var(--order)" fill="var(--order-bg)"/>
+    <text class="n-label" x="394" y="436">OrderDay</text>
+    <text class="n-sub"   x="394" y="450">price + discount</text>
+
+    <rect class="n-box" x="380" y="528" width="160" height="40" stroke="var(--order)" fill="var(--order-bg)"/>
+    <text class="n-label" x="394" y="546">OrderMeal</text>
+    <text class="n-sub"   x="394" y="560">what gets eaten</text>
+
+    <!-- Catalogue -->
+    <rect class="n-box" x="700" y="48" width="160" height="40" stroke="var(--cat)" fill="var(--cat-bg)"/>
+    <text class="n-label" x="714" y="66">Setting</text>
+    <text class="n-sub"   x="714" y="80">key/value tunables</text>
+
+    <rect class="n-box" x="700" y="148" width="160" height="40" stroke="var(--cat)" fill="var(--cat-bg)"/>
+    <text class="n-label" x="714" y="166">CalendarBlock</text>
+    <text class="n-sub"   x="714" y="180">holidays + breaks</text>
+
+    <rect class="n-box" x="700" y="528" width="160" height="40" stroke="var(--cat)" fill="var(--cat-bg)"/>
+    <text class="n-label" x="714" y="546">MenuItem</text>
+    <text class="n-sub"   x="714" y="560">dish + both prices</text>
+
+    <rect class="n-box" x="700" y="618" width="160" height="40" stroke="var(--cat)" fill="var(--cat-bg)"/>
+    <text class="n-label" x="714" y="636">MenuOffering</text>
+    <text class="n-sub"   x="714" y="650">dish, per date+meal</text>
+  </g>
+</svg>
+</div>
+
+<div class="legend">
+  <span><i class="swatch" style="border-color:var(--people);background:var(--people-bg)"></i> People</span>
+  <span><i class="swatch" style="border-color:var(--order);background:var(--order-bg)"></i> Ordering</span>
+  <span><i class="swatch" style="border-color:var(--cat);background:var(--cat-bg)"></i> Catalogue</span>
+  <span><i class="solidline"></i> required relation</span>
+  <span><i class="dashline"></i> optional relation (nullable FK)</span>
+  <span><b>1 → N</b> arrow points at the many side</span>
+</div>
+
+<p style="margin-top:18px">
+  <code>Setting</code> and <code>CalendarBlock</code> have no foreign keys — they are lookup tables read by
+  date/key. The spine of the system is the chain <code>OrderCycle → Order → OrderDay → OrderMeal</code>,
+  one row per month, per student, per date, per meal.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>People</h2>
+
+<div class="grid">
+
+  <article class="ent people">
+    <header>
+      <h4>User</h4>
+      <p>Every human that logs in. One table for all three roles — the <code>role</code> column, not a separate table, decides what they see.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">email</td><td class="typ">String</td><td class="tag"><span class="b b-uq">unique</span></td></tr>
+      <tr><td class="col">passwordHash</td><td class="typ">String</td><td class="tag"><span class="note">scrypt</span></td></tr>
+      <tr><td class="col">name</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">role</td><td class="typ">Role</td><td class="tag"><span class="note">default PARENT</span></td></tr>
+      <tr><td class="col">active</td><td class="typ">Boolean</td><td class="tag"><span class="note">default true</span></td></tr>
+      <tr><td class="col">createdAt/updatedAt</td><td class="typ">DateTime</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ students</td><td class="typ">Student[]</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ orders</td><td class="typ">Order[]</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ sessions</td><td class="typ">Session[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>hashing</b> scrypt via lib/password.js — no native dependency</footer>
+  </article>
+
+  <article class="ent people">
+    <header>
+      <h4>Session</h4>
+      <p>Server-side sessions. The cookie holds this <code>id</code>, never the user id — so revoking a login is a row delete.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">userId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">expiresAt</td><td class="typ">DateTime</td><td class="tag"><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">createdAt</td><td class="typ">DateTime</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">← user</td><td class="typ">User</td><td class="tag"><span class="note">cascade</span></td></tr>
+    </table>
+    <footer><b>index</b> userId · expiresAt (sweeps expired rows)</footer>
+  </article>
+
+  <article class="ent people">
+    <header>
+      <h4>Student</h4>
+      <p>The child being fed. <code>classGroup</code> drives which dates are orderable; <code>parentId</code> is nullable so the school can hold a roster before parents have accounts.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">name</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">classGroup</td><td class="typ">ClassGroup</td><td class="tag"><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">year</td><td class="typ">String?</td><td class="tag"></td></tr>
+      <tr><td class="col">allergies</td><td class="typ">String[]</td><td class="tag"><span class="note">standing</span></td></tr>
+      <tr><td class="col">parentId</td><td class="typ">String?</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">active</td><td class="typ">Boolean</td><td class="tag"><span class="note">default true</span></td></tr>
+      <tr><td class="col">createdAt/updatedAt</td><td class="typ">DateTime</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">← parent</td><td class="typ">User?</td><td class="tag"><span class="note">set null</span></td></tr>
+      <tr class="rel"><td class="col">→ orders</td><td class="typ">Order[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>note</b> allergy keys match ALLERGY_LABELS in lib/mockOrders.js</footer>
+  </article>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>Catalogue — what can be ordered</h2>
+
+<div class="grid">
+
+  <article class="ent cat">
+    <header>
+      <h4>MenuItem</h4>
+      <p>One dish, carrying both sides of the margin: what the vendor charges and what the parent pays. Replaces <code>lib/pricingData.js</code>.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">name</td><td class="typ">String</td><td class="tag"><span class="b b-uq">unique</span></td></tr>
+      <tr><td class="col">description</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">mealType</td><td class="typ">MealType</td><td class="tag"><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">vendorCost</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">parentPrice</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">active</td><td class="typ">Boolean</td><td class="tag"></td></tr>
+      <tr><td class="col">createdAt/updatedAt</td><td class="typ">DateTime</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ offerings</td><td class="typ">MenuOffering[]</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ orderMeals</td><td class="typ">OrderMeal[]</td><td class="tag"></td></tr>
+    </table>
+  </article>
+
+  <article class="ent cat">
+    <header>
+      <h4>MenuOffering</h4>
+      <p>The join that says “this dish is available on this date for this meal”. Replaces the hardcoded <code>MENU_BY_DATE</code> map.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">date</td><td class="typ">Date</td><td class="tag"><span class="b b-uq">uq</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">mealType</td><td class="typ">MealType</td><td class="tag"><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">menuItemId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">sortOrder</td><td class="typ">Int</td><td class="tag"><span class="note">display order</span></td></tr>
+      <tr class="rel"><td class="col">← menuItem</td><td class="typ">MenuItem</td><td class="tag"><span class="note">cascade</span></td></tr>
+    </table>
+    <footer><b>unique</b> (date, mealType, menuItemId) — a dish appears once per meal per day</footer>
+  </article>
+
+  <article class="ent cat">
+    <header>
+      <h4>CalendarBlock</h4>
+      <p>Dates a class group <em>cannot</em> order for. Blocking is per group because Cambridge and Homeschool/Plus break on different weeks. Replaces <code>BLOCKED_DATES</code>.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">date</td><td class="typ">Date</td><td class="tag"><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">classGroup</td><td class="typ">ClassGroup</td><td class="tag"><span class="b b-uq">uq</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">kind</td><td class="typ">BlockKind</td><td class="tag"></td></tr>
+      <tr><td class="col">name</td><td class="typ">String</td><td class="tag"><span class="note">label</span></td></tr>
+    </table>
+    <footer><b>unique</b> (date, classGroup) · <b>no FK</b> — pure lookup<br><b>e.g.</b> “Agong’s Birthday” · “Term 3 break”</footer>
+  </article>
+
+  <article class="ent cat">
+    <header>
+      <h4>PlanOption</h4>
+      <p>The Chef’s Choice bundles a parent can pick instead of choosing dishes. Replaces <code>CHEFS_PRICING</code>.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">code</td><td class="typ">String</td><td class="tag"><span class="b b-uq">unique</span></td></tr>
+      <tr><td class="col">label</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">note</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">vendorCost</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">parentPrice</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">pricing</td><td class="typ">PlanPricing</td><td class="tag"></td></tr>
+      <tr><td class="col">active</td><td class="typ">Boolean</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ orders</td><td class="typ">Order[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>codes</b> chefs_bf · chefs_ln · chefs_both · chefs_set_daily</footer>
+  </article>
+
+  <article class="ent cat">
+    <header>
+      <h4>Setting</h4>
+      <p>Key/value tunables that would otherwise be magic numbers scattered through the UI.</p>
+    </header>
+    <table>
+      <tr><td class="col">key</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">value</td><td class="typ">String</td><td class="tag"></td></tr>
+      <tr><td class="col">updatedAt</td><td class="typ">DateTime</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>seeded</b> combo_discount = 1.00 · currency = MYR · timezone = Asia/Kuala_Lumpur</footer>
+  </article>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>Ordering — the four-level spine</h2>
+
+<div class="grid">
+
+  <article class="ent order">
+    <header>
+      <h4>OrderCycle</h4>
+      <p>One orderable month. Everything currently hardcoded to June 2026 hangs off a row here, and <code>status</code> is the gate that opens and closes ordering.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">year</td><td class="typ">Int</td><td class="tag"><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">month</td><td class="typ">Int</td><td class="tag"><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">status</td><td class="typ">CycleStatus</td><td class="tag"></td></tr>
+      <tr><td class="col">opensAt / closesAt</td><td class="typ">DateTime?</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">→ orders</td><td class="typ">Order[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>unique</b> (year, month) — one cycle per month</footer>
+  </article>
+
+  <article class="ent order">
+    <header>
+      <h4>Order</h4>
+      <p>A student’s order for one cycle. Totals are <em>snapshotted at submit</em>, never recomputed from live prices, and allergies are re-declared here rather than read off <code>Student</code>.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">cycleId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">studentId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">parentId</td><td class="typ">String?</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">classGroup</td><td class="typ">ClassGroup</td><td class="tag"><span class="note">copied</span></td></tr>
+      <tr><td class="col">planId</td><td class="typ">String?</td><td class="tag"><span class="b b-fk">fk</span></td></tr>
+      <tr><td class="col">status</td><td class="typ">OrderStatus</td><td class="tag"><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">subtotal</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">discount</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">total</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">allergies</td><td class="typ">String[]</td><td class="tag"><span class="note">declared</span></td></tr>
+      <tr><td class="col">allergyNote</td><td class="typ">String?</td><td class="tag"></td></tr>
+      <tr><td class="col">submittedAt</td><td class="typ">DateTime?</td><td class="tag"></td></tr>
+      <tr class="rel"><td class="col">← cycle / student</td><td class="typ">·</td><td class="tag"><span class="note">cascade</span></td></tr>
+      <tr class="rel"><td class="col">← parent / plan</td><td class="typ">·</td><td class="tag"><span class="note">set null</span></td></tr>
+      <tr class="rel"><td class="col">→ days</td><td class="typ">OrderDay[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>unique</b> (cycleId, studentId) — one order per child per month<br><b>index</b> parentId · status<br><b>copied at order time</b> classGroup · allergies — the vendor reads these, not Student</footer>
+  </article>
+
+  <article class="ent order">
+    <header>
+      <h4>OrderDay</h4>
+      <p>One ordered date, and <b>this is where price lives</b>. A <code>chef_both</code> day is a single bundled line covering two meals, so the price and the combo discount are properties of the day, not of either meal.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">orderId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">date</td><td class="typ">Date</td><td class="tag"><span class="b b-uq">uq</span><span class="b b-ix">idx</span></td></tr>
+      <tr><td class="col">price</td><td class="typ">Decimal(10,2)</td><td class="tag"></td></tr>
+      <tr><td class="col">discount</td><td class="typ">Decimal(10,2)</td><td class="tag"><span class="note">combo</span></td></tr>
+      <tr class="rel"><td class="col">← order</td><td class="typ">Order</td><td class="tag"><span class="note">cascade</span></td></tr>
+      <tr class="rel"><td class="col">→ meals</td><td class="typ">OrderMeal[]</td><td class="tag"></td></tr>
+    </table>
+    <footer><b>unique</b> (orderId, date) · <b>index</b> date — the vendor’s daily query</footer>
+  </article>
+
+  <article class="ent order">
+    <header>
+      <h4>OrderMeal</h4>
+      <p>What the student actually eats. Either a Chef’s Choice slot (<code>mode = CHEF</code>, no item) or a specific dish. Name and both unit prices are frozen here at submit.</p>
+    </header>
+    <table>
+      <tr><td class="col">id</td><td class="typ">String</td><td class="tag"><span class="b b-pk">pk</span></td></tr>
+      <tr><td class="col">orderDayId</td><td class="typ">String</td><td class="tag"><span class="b b-fk">fk</span><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">mealType</td><td class="typ">MealType</td><td class="tag"><span class="b b-uq">uq</span></td></tr>
+      <tr><td class="col">mode</td><td class="typ">SelectionMode</td><td class="tag"></td></tr>
+      <tr><td class="col">menuItemId</td><td class="typ">String?</td><td class="tag"><span class="b b-fk">fk</span></td></tr>
+      <tr><td class="col">itemNameSnapshot</td><td class="typ">String?</td><td class="tag"><span class="note">frozen</span></td></tr>
+      <tr><td class="col">unitParentPrice</td><td class="typ">Decimal(10,2)</td><td class="tag"><span class="note">frozen</span></td></tr>
+      <tr><td class="col">unitVendorCost</td><td class="typ">Decimal(10,2)</td><td class="tag"><span class="note">frozen</span></td></tr>
+      <tr class="rel"><td class="col">← orderDay</td><td class="typ">OrderDay</td><td class="tag"><span class="note">cascade</span></td></tr>
+      <tr class="rel"><td class="col">← menuItem</td><td class="typ">MenuItem?</td><td class="tag"><span class="note">set null</span></td></tr>
+    </table>
+    <footer><b>unique</b> (orderDayId, mealType) — one breakfast, one lunch, one brunch per day</footer>
+  </article>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>Enums</h2>
+
+<div class="enums">
+  <div class="enum">
+    <h5>Role</h5>
+    <div class="vals"><span class="val">PARENT</span><span class="val">ADMIN</span><span class="val">VENDOR</span></div>
+    <p>Default <code>PARENT</code>. Mirrors the three entry points: /parent, /admin, /vendor.</p>
+  </div>
+  <div class="enum">
+    <h5>ClassGroup</h5>
+    <div class="vals"><span class="val">CAMBRIDGE</span><span class="val">HOMESCHOOL</span><span class="val">PLUS</span><span class="val">STAFF</span></div>
+    <p>Determines which dates are orderable via CalendarBlock.</p>
+  </div>
+  <div class="enum">
+    <h5>MealType</h5>
+    <div class="vals"><span class="val">BREAKFAST</span><span class="val">LUNCH</span><span class="val">BRUNCH</span></div>
+    <p>Mon–Thu offer breakfast + lunch; Friday is brunch only.</p>
+  </div>
+  <div class="enum">
+    <h5>SelectionMode</h5>
+    <div class="vals"><span class="val">CHEF</span><span class="val">CUSTOM</span></div>
+    <p><code>CHEF</code> — vendor decides the dish. <code>CUSTOM</code> — parent picked a specific MenuItem.</p>
+  </div>
+  <div class="enum">
+    <h5>BlockKind</h5>
+    <div class="vals"><span class="val">HOLIDAY</span><span class="val">BREAK</span></div>
+    <p>Public holiday vs. term break — same effect, different label in the UI.</p>
+  </div>
+  <div class="enum">
+    <h5>PlanPricing</h5>
+    <div class="vals"><span class="val">PER_DAY_RATE</span><span class="val">PER_STUDY_DAY</span></div>
+    <p><code>PER_DAY_RATE</code> — flat rate per ordered day. <code>PER_STUDY_DAY</code> — promo rate × every available study day in the cycle.</p>
+  </div>
+  <div class="enum">
+    <h5>CycleStatus</h5>
+    <div class="vals"><span class="val">DRAFT</span><span class="val">OPEN</span><span class="val">CLOSED</span></div>
+    <p>Only <code>OPEN</code> cycles accept new orders.</p>
+  </div>
+  <div class="enum">
+    <h5>OrderStatus</h5>
+    <div class="vals"><span class="val">DRAFT</span><span class="val">SUBMITTED</span><span class="val">CANCELLED</span><span class="val">PAID</span></div>
+    <p>Prices freeze on the transition into <code>SUBMITTED</code>.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>Design decisions</h2>
+
+<div class="notes">
+  <div class="card-note">
+    <h5>Price lives on the day, not the meal</h5>
+    <p>This mirrors <code>calcChild()</code> in the parent order page. A <code>chef_both</code> day is one bundled price
+    covering two meals, and the RM 1.00 combo discount is earned by the <em>day</em> (breakfast and lunch both picked),
+    not by either meal alone. Putting price on <code>OrderMeal</code> would force an arbitrary split.</p>
+  </div>
+  <div class="card-note">
+    <h5>Orders snapshot everything they depend on</h5>
+    <p><code>OrderMeal</code> stores <code>itemNameSnapshot</code>, <code>unitParentPrice</code> and
+    <code>unitVendorCost</code>; <code>Order</code> stores <code>subtotal</code>/<code>discount</code>/<code>total</code>
+    and its own <code>allergies</code> array. Editing prices in <code>/admin/prices</code>, renaming a dish, or updating a
+    student’s standing allergies never rewrites an order that was already placed.</p>
+  </div>
+  <div class="card-note">
+    <h5>Money is Decimal(10,2), never Float</h5>
+    <p>Every currency column is <code>@db.Decimal(10, 2)</code>. Prisma returns these as Decimal objects — don’t coerce
+    to Number before arithmetic.</p>
+  </div>
+  <div class="card-note">
+    <h5>Dates are real DATE columns</h5>
+    <p><code>MenuOffering.date</code>, <code>CalendarBlock.date</code> and <code>OrderDay.date</code> are
+    <code>@db.Date</code>, built with <code>Date.UTC</code> so a Malaysian timezone offset can’t shift a meal onto the
+    wrong school day.</p>
+  </div>
+  <div class="card-note">
+    <h5>Cascade down the order spine, set-null across it</h5>
+    <p>Deleting an Order removes its days and meals (cascade) — they have no meaning alone. Deleting a
+    <code>User</code>, <code>PlanOption</code> or <code>MenuItem</code> nulls the reference instead, because the order
+    itself must survive; that is what the snapshot columns are for.</p>
+  </div>
+  <div class="card-note">
+    <h5>Prisma 7 specifics</h5>
+    <p>The client needs the <code>PrismaPg</code> driver adapter rather than connecting on its own, the generator is
+    <code>prisma-client-js</code> (the newer <code>prisma-client</code> emits TypeScript this plain-JS project can’t
+    import), and the connection URL lives in <code>prisma.config.ts</code>, not in the schema.
+    <code>DATABASE_URL</code> is pooled for the app; <code>DIRECT_URL</code> is unpooled for migrations, which cannot
+    run through pgBouncer.</p>
+  </div>
+  <div class="card-note warn">
+    <h5>Not wired up yet</h5>
+    <p>The schema is migrated and seeded, but <b>no page or API route reads from it</b> — the UI still renders entirely
+    from the static <code>lib/*.js</code> modules, and <code>prisma/seed.js</code> seeds the database <em>from</em> those
+    modules. So <code>lib/menuData.js</code>, <code>lib/schoolCalendar.js</code>, <code>lib/pricingData.js</code> and
+    <code>lib/mockOrders.js</code> remain the source of truth for June 2026 until an admin UI can create cycles.
+    Porting the pages over is the outstanding work.</p>
+  </div>
+</div>
+
+<footer class="page">
+  Source: <code>prisma/schema.prisma</code> · <code>prisma/seed.js</code> · migration <code>20260728070122_init</code>.
+  Regenerate this page when the schema changes.
+</footer>
+
+</div>
+</body>
+</html>
