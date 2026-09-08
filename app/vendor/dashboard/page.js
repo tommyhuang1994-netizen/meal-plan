@@ -96,10 +96,16 @@ export default function VendorDashboard() {
       {/* Header */}
       <header style={{ background: '#1B5E20', padding: '14px 20px', paddingRight: 108, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Image src="/logo.png" alt="Zera" width={140} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
-        <button onClick={() => router.push('/vendor')}
-          style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          {t('common.signOut')}
-        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={() => router.push('/vendor/billing')}
+            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            {t('billing.vendorTitle')}
+          </button>
+          <button onClick={() => router.push('/vendor')}
+            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            {t('common.signOut')}
+          </button>
+        </div>
       </header>
 
       <div style={{ maxWidth: 960, margin: '0 auto', padding: '20px 16px 60px', display: 'flex', flexDirection: 'column', gap: 20 }}>

@@ -38,6 +38,7 @@ export default function AdminDashboard() {
           <Card title={t('adminDash.menuTitle')}   desc={t('adminDash.menuDesc')}   href="/admin/menu"   color="#1B5E20" />
           <Card title={t('adminDash.pricesTitle')} desc={t('adminDash.pricesDesc')} href="/admin/prices" color="#D97706" />
           <Card title={t('adminDash.ordersTitle')} desc={t('adminDash.ordersDesc')} href="/admin/orders" color="#ea580c" />
+          <Card title={t('billing.adminCardTitle')} desc={t('billing.adminCardDesc')} href="/admin/billing" color="#1565C0" />
         </div>
       </div>
     </main>
