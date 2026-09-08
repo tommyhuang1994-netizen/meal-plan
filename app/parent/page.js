@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useT, fmtMonthYear, fmtDateInMonth } from '../../lib/i18n';
-import { getParentOrders, getParentOrderDetail, updateParentOrderDay, monthLabel, DEFAULT_MONTH, CHEF_CHOICE } from '../../lib/orderStore';
+import { getStudentOrders, getStudentOrderDetail, updateParentOrderDay, monthLabel, DEFAULT_MONTH, CHEF_CHOICE } from '../../lib/orderStore';
 import { priceForDate, dishNamesFor } from '../../lib/pricing';
 import DayMenuSheet from './DayMenuSheet';
 import { isDateLocked, formatDeadline } from '../../lib/cutoff';
@@ -50,13 +50,13 @@ export default function ParentPage() {
   const [editDay, setEditDay] = useState(null);  // { order, row } being changed
 
   useEffect(() => {
-    const list = getParentOrders();
+    const list = getStudentOrders();
     setOrders(list);
     // Counting open days needs each order's dates, so gather them once here
     // rather than re-reading storage on every render.
     const counts = {};
     for (const o of list) {
-      const dates = getParentOrderDetail(o.studentName, o.monthKey).map(r => r.date);
+      const dates = getStudentOrderDetail(o.studentName, o.monthKey).map(r => r.date);
       counts[o.id] = editableCountOf(dates);
     }
     setEditable(counts);
@@ -66,7 +66,7 @@ export default function ParentPage() {
   useEffect(() => {
     if (!openId) { setDetail([]); return; }
     const o = orders.find(x => x.id === openId);
-    setDetail(o ? getParentOrderDetail(o.studentName, o.monthKey) : []);
+    setDetail(o ? getStudentOrderDetail(o.studentName, o.monthKey) : []);
   }, [openId, orders]);
 
   // The CTA points at the open ordering cycle, and stands down once every
@@ -141,7 +141,15 @@ export default function ParentPage() {
                   <div key={o.id} style={styles.orderCard}>
                     <div style={styles.orderTop}>
                       <div style={{ minWidth:0 }}>
-                        <p style={styles.mealName}>{monthLabel(o.monthKey, lang)}</p>
+                        <p style={styles.mealName}>
+                          {monthLabel(o.monthKey, lang)}
+                          {o.monthKey !== DEFAULT_MONTH && (
+                            <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:'#6B7280',
+                              background:'#F3F4F6', borderRadius:20, padding:'2px 9px', verticalAlign:'middle' }}>
+                              {t('parent.pastMonth')}
+                            </span>
+                          )}
+                        </p>
                         <p style={styles.childName}>
                           <svg width="12" height="12" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 4, flexShrink: 0 }}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -340,9 +348,9 @@ export default function ParentPage() {
               price: price - discount,
             });
             // Re-read so the card total and the day list both reflect the change.
-            const list = getParentOrders();
+            const list = getStudentOrders();
             setOrders(list);
-            setDetail(getParentOrderDetail(editDay.order.studentName, editDay.order.monthKey));
+            setDetail(getStudentOrderDetail(editDay.order.studentName, editDay.order.monthKey));
             setEditDay(null);
           }}
         />
