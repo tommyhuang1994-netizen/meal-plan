@@ -22,14 +22,6 @@ function classLabel(o) {
   return o.division.startsWith(o.classGroup) ? o.division : `${o.classGroup} ${o.division}`;
 }
 
-// cutoffDate = 1st of the order month minus 7 days (e.g. June order → cutoff May 25)
-const MOCK_ORDERS = [
-  { id: 'ORD-001', childName: 'Ahmad Irfan', month: 'April 2026', schoolDays: 22, status: 'delivered', cutoffDate: 'Mar 25, 2026' },
-  { id: 'ORD-002', childName: 'Ahmad Irfan', month: 'May 2026',   schoolDays: 20, status: 'delivered', cutoffDate: 'Apr 24, 2026' },
-  { id: 'ORD-003', childName: 'Nur Aisyah',  month: 'May 2026',   schoolDays: 20, status: 'delivered', cutoffDate: 'Apr 24, 2026' },
-  { id: 'ORD-004', childName: 'Nur Aisyah',  month: 'June 2026',  schoolDays: 21, status: 'confirmed', cutoffDate: 'May 25, 2026' },
-];
-
 const STATUS_CONFIG = {
   pending:   { bg: '#FEF9C3', color: '#854D0E', dot: '#CA8A04' },
   confirmed: { bg: '#DCFCE7', color: '#14532D', dot: '#16A34A' },
@@ -76,6 +68,120 @@ export default function ParentPage() {
   const showCTA = true;   // ordering again replaces the current order
   const NEXT_MONTH_LABEL = monthLabel(DEFAULT_MONTH, lang);
   const grandTotal = cycleOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const pastOrders = orders.filter(o => o.monthKey !== DEFAULT_MONTH);
+
+  // One card, rendered in both sections. `past` months are delivered and
+  // read-only; the current month can still be changed day by day.
+  function renderOrderCard(o, past) {
+    const isOpen = openId === o.id;
+    const openDays = editableCount(o);
+    return (
+      <div key={o.id} style={styles.orderCard}>
+        <div style={styles.orderTop}>
+          <div style={{ minWidth:0 }}>
+            <p style={styles.mealName}>{monthLabel(o.monthKey, lang)}</p>
+            <p style={styles.childName}>
+              <svg width="12" height="12" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 4, flexShrink: 0 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              {o.studentName}
+              {o.classGroup && <span style={{ color:'#9CA3AF', marginLeft:6 }}>· {classLabel(o)}</span>}
+            </p>
+          </div>
+          <div style={{ textAlign:'right', flexShrink:0 }}>
+            <p style={{ margin:0, fontSize:19, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</p>
+            <p style={{ margin:'2px 0 0', fontSize:12, color:'#9CA3AF' }}>{t('parent.schoolDays', { n: o.dayCount })}</p>
+            {past && (
+              <span style={{ ...styles.statusBadge, background:'#F0F9FF', color:'#0C4A6E', marginTop:4 }}>
+                <span style={{ ...styles.statusDot, background:'#0284C7' }} />
+                {t('status.delivered')}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {o.planLabel && <p style={{ margin:'8px 0 0', fontSize:12.5, color:'#6B7280' }}>{o.planLabel}</p>}
+
+        <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+          <button onClick={() => setOpenId(isOpen ? null : o.id)} aria-expanded={isOpen}
+            style={{ background:'none', border:'none', padding:0, cursor:'pointer',
+              color:'#1B5E20', fontSize:13, fontWeight:700, display:'flex', alignItems:'center', gap:5 }}>
+            {isOpen ? t('parent.hideDays') : t('parent.viewDays', { n: o.dayCount })}
+            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"
+              style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition:'transform 180ms' }}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {!past && (openDays > 0 ? (
+            <Link href={`/parent/order?child=${encodeURIComponent(o.studentName)}`}
+              style={{ marginLeft:'auto', color:'#1B5E20', fontSize:13, fontWeight:700, textDecoration:'none',
+                border:'1.5px solid #1B5E20', borderRadius:8, padding:'5px 12px' }}>
+              {t('parent.changeOrder')}
+            </Link>
+          ) : (
+            <span style={{ marginLeft:'auto', color:'#9CA3AF', fontSize:12, fontWeight:600 }}>{t('parent.allClosed')}</span>
+          ))}
+        </div>
+
+        {!past && openDays > 0 && (
+          <p style={{ margin:'6px 0 0', fontSize:11.5, color:'#9CA3AF' }}>
+            {t('parent.editableDays', { n: openDays, total: o.dayCount })}
+          </p>
+        )}
+
+        {isOpen && (
+          <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:6 }}>
+            {detail.map(d => {
+              const day = parseInt(d.date.slice(8), 10);
+              const closed = isDateLocked(d.date);
+              const meals = [
+                d.breakfast && `${t('meal.breakfast')}: ${d.breakfast === CHEF_CHOICE ? t('order.chefsChoice') : d.breakfast}`,
+                d.lunch     && `${t('meal.lunch')}: ${d.lunch === CHEF_CHOICE ? t('order.chefsChoice') : d.lunch}`,
+                d.brunch    && `${t('meal.brunch')}: ${d.brunch === CHEF_CHOICE ? t('order.chefsChoice') : d.brunch}`,
+              ].filter(Boolean);
+              return (
+                <div key={d.date} style={{
+                  display:'flex', gap:10, alignItems:'flex-start', justifyContent:'space-between',
+                  background: closed ? '#F9FAFB' : '#F0FDF4',
+                  border:`1px solid ${closed ? '#F1F3F5' : '#DCF0DD'}`,
+                  borderRadius:10, padding:'10px 12px',
+                }}>
+                  <div style={{ minWidth:0 }}>
+                    <p style={{ margin:0, fontSize:12.5, fontWeight:700, color:'#374151' }}>
+                      {fmtDateInMonth(lang, o.monthKey, day, false)}
+                    </p>
+                    {meals.map(m => (
+                      <p key={m} style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>{m}</p>
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:5, flexShrink:0 }}>
+                    <span style={{ fontSize:13.5, fontWeight:700, color:'#111827', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap' }}>
+                      {fmtRM(d.price)}
+                    </span>
+                    {past || closed ? (
+                      <span style={{ fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>{t('parent.dayClosed')}</span>
+                    ) : (
+                      <button onClick={() => setEditDay({ order: o, row: d })}
+                        style={{ background:'#fff', border:'1.5px solid #1B5E20', color:'#1B5E20',
+                          borderRadius:7, padding:'4px 12px', fontSize:11.5, fontWeight:700,
+                          cursor:'pointer', whiteSpace:'nowrap' }}>
+                        {t('parent.change')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid #E5E7EB', paddingTop:9, marginTop:2 }}>
+              <span style={{ fontSize:13.5, fontWeight:700, color:'#111827' }}>{t('parent.total')}</span>
+              <span style={{ fontSize:16, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <main style={{ background: '#FAFAFA', minHeight: '100dvh' }}>
@@ -121,152 +227,26 @@ export default function ParentPage() {
           </div>
         )}
 
-        {/* Orders placed from this browser */}
-        {orders.length > 0 && (
+        {/* This month — still open to change */}
+        {cycleOrders.length > 0 && (
           <section>
             <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
               <h2 style={styles.sectionTitle}>{t('parent.myOrders')}</h2>
-              {cycleOrders.length > 0 && (
-                <span style={{ fontSize:13, color:'#6B7280' }}>
-                  {t('parent.monthTotal', { month: monthLabel(DEFAULT_MONTH, lang) })}
-                  <strong style={{ color:'#1B5E20', marginLeft:6, fontSize:15 }}>{fmtRM(grandTotal)}</strong>
-                </span>
-              )}
+              <span style={{ fontSize:13, color:'#6B7280' }}>
+                {t('parent.monthTotal', { month: monthLabel(DEFAULT_MONTH, lang) })}
+                <strong style={{ color:'#1B5E20', marginLeft:6, fontSize:15 }}>{fmtRM(grandTotal)}</strong>
+              </span>
             </div>
-
             <div style={styles.orderList}>
-              {orders.map(o => {
-                const isOpen = openId === o.id;
-                return (
-                  <div key={o.id} style={styles.orderCard}>
-                    <div style={styles.orderTop}>
-                      <div style={{ minWidth:0 }}>
-                        <p style={styles.mealName}>
-                          {monthLabel(o.monthKey, lang)}
-                          {o.monthKey !== DEFAULT_MONTH && (
-                            <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:'#6B7280',
-                              background:'#F3F4F6', borderRadius:20, padding:'2px 9px', verticalAlign:'middle' }}>
-                              {t('parent.pastMonth')}
-                            </span>
-                          )}
-                        </p>
-                        <p style={styles.childName}>
-                          <svg width="12" height="12" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 4, flexShrink: 0 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                          {o.studentName}
-                          {o.classGroup && (
-                            <span style={{ color:'#9CA3AF', marginLeft:6 }}>· {classLabel(o)}</span>
-                          )}
-                        </p>
-                      </div>
-                      <div style={{ textAlign:'right', flexShrink:0 }}>
-                        <p style={{ margin:0, fontSize:19, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</p>
-                        <p style={{ margin:'2px 0 0', fontSize:12, color:'#9CA3AF' }}>{t('parent.schoolDays', { n: o.dayCount })}</p>
-                      </div>
-                    </div>
-
-                    {o.planLabel && (
-                      <p style={{ margin:'8px 0 0', fontSize:12.5, color:'#6B7280' }}>{o.planLabel}</p>
-                    )}
-
-                    <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-                      <button onClick={() => setOpenId(isOpen ? null : o.id)} aria-expanded={isOpen}
-                        style={{ background:'none', border:'none', padding:0, cursor:'pointer',
-                          color:'#1B5E20', fontSize:13, fontWeight:700, display:'flex', alignItems:'center', gap:5 }}>
-                        {isOpen ? t('parent.hideDays') : t('parent.viewDays', { n: o.dayCount })}
-                        <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"
-                          style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition:'transform 180ms' }}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-
-                      {/* Change this child's order. Only dates still open can
-                          actually be altered — the order page enforces it. */}
-                      {editableCount(o) > 0 ? (
-                        <Link href={`/parent/order?child=${encodeURIComponent(o.studentName)}`}
-                          style={{ marginLeft:'auto', color:'#1B5E20', fontSize:13, fontWeight:700, textDecoration:'none',
-                            border:'1.5px solid #1B5E20', borderRadius:8, padding:'5px 12px' }}>
-                          {t('parent.changeOrder')}
-                        </Link>
-                      ) : (
-                        <span style={{ marginLeft:'auto', color:'#9CA3AF', fontSize:12, fontWeight:600 }}>
-                          {t('parent.allClosed')}
-                        </span>
-                      )}
-                    </div>
-                    {editableCount(o) > 0 && (
-                      <p style={{ margin:'6px 0 0', fontSize:11.5, color:'#9CA3AF' }}>
-                        {t('parent.editableDays', { n: editableCount(o), total: o.dayCount })}
-                      </p>
-                    )}
-
-                    {isOpen && (
-                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:6 }}>
-                        {detail.map(d => {
-                          const day = parseInt(d.date.slice(8), 10);
-                          const meals = [
-                            d.breakfast && `${t('meal.breakfast')}: ${d.breakfast === CHEF_CHOICE ? t('order.chefsChoice') : d.breakfast}`,
-                            d.lunch     && `${t('meal.lunch')}: ${d.lunch === CHEF_CHOICE ? t('order.chefsChoice') : d.lunch}`,
-                            d.brunch    && `${t('meal.brunch')}: ${d.brunch === CHEF_CHOICE ? t('order.chefsChoice') : d.brunch}`,
-                          ].filter(Boolean);
-                          return (
-                            <div key={d.date} style={{
-                              display:'flex', gap:10, alignItems:'flex-start', justifyContent:'space-between',
-                              // A tinted block per day, so one day's meals read as one thing.
-                              // Closed days go neutral; the ones still open stay green.
-                              background: isDateLocked(d.date) ? '#F9FAFB' : '#F0FDF4',
-                              border:`1px solid ${isDateLocked(d.date) ? '#F1F3F5' : '#DCF0DD'}`,
-                              borderRadius:10, padding:'10px 12px',
-                            }}>
-                              <div style={{ minWidth:0 }}>
-                                <p style={{ margin:0, fontSize:12.5, fontWeight:700, color:'#374151' }}>
-                                  {fmtDateInMonth(lang, o.monthKey, day, false)}
-                                </p>
-                                {meals.map(m => (
-                                  <p key={m} style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>{m}</p>
-                                ))}
-                              </div>
-                              {/* Column, not inline — otherwise the price and the
-                                  button share a line whenever the row is short. */}
-                              <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:5, flexShrink:0 }}>
-                                <span style={{ fontSize:13.5, fontWeight:700, color:'#111827', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap' }}>
-                                  {fmtRM(d.price)}
-                                </span>
-                                {isDateLocked(d.date) ? (
-                                  <span style={{ fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>
-                                    {t('parent.dayClosed')}
-                                  </span>
-                                ) : (
-                                  <button onClick={() => setEditDay({ order: o, row: d })}
-                                    style={{ background:'#fff', border:'1.5px solid #1B5E20', color:'#1B5E20',
-                                      borderRadius:7, padding:'4px 12px', fontSize:11.5, fontWeight:700,
-                                      cursor:'pointer', whiteSpace:'nowrap' }}>
-                                    {t('parent.change')}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                        <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid #E5E7EB', paddingTop:9, marginTop:2 }}>
-                          <span style={{ fontSize:13.5, fontWeight:700, color:'#111827' }}>{t('parent.total')}</span>
-                          <span style={{ fontSize:16, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {cycleOrders.map(o => renderOrderCard(o, false))}
             </div>
           </section>
         )}
 
-        {/* Order History */}
+        {/* Earlier months — read-only, but open them to see what was served */}
         <section>
           <h2 style={styles.sectionTitle}>{t('parent.history')}</h2>
-
-          {MOCK_ORDERS.length === 0 ? (
+          {pastOrders.length === 0 ? (
             <div style={styles.emptyState}>
               <svg width="40" height="40" fill="none" stroke="#D1D5DB" strokeWidth="1.5" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -276,53 +256,7 @@ export default function ParentPage() {
             </div>
           ) : (
             <div style={styles.orderList}>
-              {MOCK_ORDERS.map(order => {
-                const s = STATUS_CONFIG[order.status];
-                const isLocked = new Date() > new Date(order.cutoffDate);
-                return (
-                  <div key={order.id} style={styles.orderCard}>
-                    <div style={styles.orderTop}>
-                      <div>
-                        <p style={styles.mealName}>{order.month}</p>
-                        <p style={styles.childName}>
-                          <svg width="12" height="12" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 4, flexShrink: 0 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                          {order.childName}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                        <span style={{ ...styles.statusBadge, background: s.bg, color: s.color }}>
-                          <span style={{ ...styles.statusDot, background: s.dot }} />
-                          {t('status.' + order.status)}
-                        </span>
-                        {isLocked && (
-                          <span style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 3 }}>
-                            <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
-                            </svg>
-                            {t('parent.locked')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={styles.orderMeta}>
-                      <span style={styles.orderId}>{order.id}</span>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                        <span style={styles.orderDate}>
-                          <svg width="12" height="12" fill="none" stroke="#9CA3AF" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 3 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          {t('parent.schoolDays', { n: order.schoolDays })}
-                        </span>
-                        <span style={{ fontSize: 11, color: isLocked ? '#9CA3AF' : '#F97316', fontWeight: 500 }}>
-                          {isLocked ? t('parent.lockedSince', { date: order.cutoffDate }) : t('parent.editBy', { date: order.cutoffDate })}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {pastOrders.map(o => renderOrderCard(o, true))}
             </div>
           )}
         </section>
