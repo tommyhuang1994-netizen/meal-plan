@@ -194,7 +194,7 @@ export default function ParentPage() {
                     )}
 
                     {isOpen && (
-                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:8 }}>
+                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:6 }}>
                         {detail.map(d => {
                           const day = parseInt(d.date.slice(8), 10);
                           const meals = [
@@ -203,27 +203,37 @@ export default function ParentPage() {
                             d.brunch    && `${t('meal.brunch')}: ${d.brunch === CHEF_CHOICE ? t('order.chefsChoice') : d.brunch}`,
                           ].filter(Boolean);
                           return (
-                            <div key={d.date} style={{ display:'flex', gap:10, alignItems:'flex-start', justifyContent:'space-between' }}>
+                            <div key={d.date} style={{
+                              display:'flex', gap:10, alignItems:'flex-start', justifyContent:'space-between',
+                              // A tinted block per day, so one day's meals read as one thing.
+                              // Closed days go neutral; the ones still open stay green.
+                              background: isDateLocked(d.date) ? '#F9FAFB' : '#F0FDF4',
+                              border:`1px solid ${isDateLocked(d.date) ? '#F1F3F5' : '#DCF0DD'}`,
+                              borderRadius:10, padding:'10px 12px',
+                            }}>
                               <div style={{ minWidth:0 }}>
-                                <p style={{ margin:0, fontSize:12.5, fontWeight:600, color:'#374151' }}>
+                                <p style={{ margin:0, fontSize:12.5, fontWeight:700, color:'#374151' }}>
                                   {fmtDateInMonth(lang, o.monthKey, day, false)}
                                 </p>
                                 {meals.map(m => (
                                   <p key={m} style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>{m}</p>
                                 ))}
                               </div>
-                              <div style={{ textAlign:'right', flexShrink:0 }}>
-                                <span style={{ fontSize:13, fontWeight:600, color:'#111827', fontVariantNumeric:'tabular-nums' }}>
+                              {/* Column, not inline — otherwise the price and the
+                                  button share a line whenever the row is short. */}
+                              <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:5, flexShrink:0 }}>
+                                <span style={{ fontSize:13.5, fontWeight:700, color:'#111827', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap' }}>
                                   {fmtRM(d.price)}
                                 </span>
                                 {isDateLocked(d.date) ? (
-                                  <p style={{ margin:'2px 0 0', fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>
+                                  <span style={{ fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>
                                     {t('parent.dayClosed')}
-                                  </p>
+                                  </span>
                                 ) : (
                                   <button onClick={() => setEditDay({ order: o, row: d })}
-                                    style={{ marginTop:3, background:'#fff', border:'1.5px solid #1B5E20', color:'#1B5E20',
-                                      borderRadius:7, padding:'3px 10px', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>
+                                    style={{ background:'#fff', border:'1.5px solid #1B5E20', color:'#1B5E20',
+                                      borderRadius:7, padding:'4px 12px', fontSize:11.5, fontWeight:700,
+                                      cursor:'pointer', whiteSpace:'nowrap' }}>
                                     {t('parent.change')}
                                   </button>
                                 )}

@@ -8,6 +8,7 @@ import {
   monthLabel, CHEF_CHOICE,
 } from '../../../lib/orderStore';
 import { useT, fmtDateInMonth } from '../../../lib/i18n';
+import { isDateLocked } from '../../../lib/cutoff';
 
 const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
@@ -142,7 +143,7 @@ export default function AdminOrdersPage() {
                     )}
 
                     {isOpen && (
-                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:7 }}>
+                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:6 }}>
                         {detail.map(d => {
                           const day = parseInt(d.date.slice(8), 10);
                           const meals = [
@@ -151,12 +152,24 @@ export default function AdminOrdersPage() {
                             d.brunch    && `${t('meal.brunch')}: ${d.brunch === CHEF_CHOICE ? t('order.chefsChoice') : d.brunch}`,
                           ].filter(Boolean);
                           return (
-                            <div key={d.date} style={{ display:'flex', gap:10, justifyContent:'space-between', alignItems:'flex-start' }}>
+                            <div key={d.date} style={{
+                              display:'flex', gap:10, justifyContent:'space-between', alignItems:'flex-start',
+                              // Same tinted blocks as the parent view, so a day
+                              // reads as one unit in both places.
+                              background: isDateLocked(d.date) ? '#F9FAFB' : '#F0FDF4',
+                              border:`1px solid ${isDateLocked(d.date) ? '#F1F3F5' : '#DCF0DD'}`,
+                              borderRadius:10, padding:'9px 11px',
+                            }}>
                               <div style={{ minWidth:0 }}>
-                                <p style={{ margin:0, fontSize:12.5, fontWeight:600, color:'#374151' }}>{fmtDateInMonth(lang, o.monthKey, day, false)}</p>
+                                <p style={{ margin:0, fontSize:12.5, fontWeight:700, color:'#374151' }}>{fmtDateInMonth(lang, o.monthKey, day, false)}</p>
                                 {meals.map(m => <p key={m} style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280' }}>{m}</p>)}
                               </div>
-                              <span style={{ fontSize:13, fontWeight:600, color:'#111827', fontVariantNumeric:'tabular-nums', flexShrink:0 }}>{fmtRM(d.price)}</span>
+                              <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3, flexShrink:0 }}>
+                                <span style={{ fontSize:13.5, fontWeight:700, color:'#111827', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap' }}>{fmtRM(d.price)}</span>
+                                {isDateLocked(d.date) && (
+                                  <span style={{ fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>{t('parent.dayClosed')}</span>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
