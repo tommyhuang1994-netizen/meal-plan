@@ -8,7 +8,7 @@ import Image from 'next/image';
 import { MONTHS, DEFAULT_MONTH, monthLabel, servingDays, getOrdersForDate } from '../../../lib/orderStore';
 import { monthlyBill, chefSplit } from '../../../lib/billing';
 import { rowCharges } from '../../../lib/pricing';
-import { useT, fmtDateInMonth } from '../../../lib/i18n';
+import { useT, fmtDateNumeric } from '../../../lib/i18n';
 
 const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
@@ -128,7 +128,7 @@ export default function VendorBillingPage() {
                   <tbody>
                     {days.map(d => (
                       <tr key={d.day}>
-                        <td style={S.td}>{fmtDateInMonth(lang, monthKey, d.day, false)}</td>
+                        <td style={S.td}>{fmtDateNumeric(lang, monthKey, d.day)}</td>
                         <td style={{ ...S.td, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{d.orders}</td>
                         <td style={{ ...S.td, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{d.meals}</td>
                         <td style={{ ...S.td, textAlign:'right', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>{fmtRM(d.vendor)}</td>
