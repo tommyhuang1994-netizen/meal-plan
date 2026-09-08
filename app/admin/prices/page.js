@@ -6,12 +6,21 @@ import { useRouter } from 'next/navigation';
 import { CHEFS_PRICING, MENU_PRICING } from '../../../lib/pricingData';
 import { useT } from '../../../lib/i18n';
 
-function fmt(n) { return `RM ${Number(n).toFixed(2)}`; }
+// vendorCost is null for items whose cost the school has not supplied yet.
+// Unknown must render as "—", never as RM 0.00 — a zero cost would read as a
+// free item and show a 100% margin.
+const UNKNOWN = '—';
+const isKnown = (n) => n !== null && n !== undefined && n !== '';
+
+function fmt(n) { return isKnown(n) ? `RM ${Number(n).toFixed(2)}` : UNKNOWN; }
 function pct(cost, parent) {
-  if (!cost || !parent) return 0;
+  if (!isKnown(cost) || !isKnown(parent) || Number(cost) === 0) return null;
   return (((parent - cost) / cost) * 100).toFixed(0);
 }
-function markup(cost, parent) { return (parent - cost).toFixed(2); }
+function markup(cost, parent) {
+  if (!isKnown(cost) || !isKnown(parent)) return null;
+  return (parent - cost).toFixed(2);
+}
 
 const TYPE_COLORS = {
   Breakfast: { bg: '#FFFBEB', border: '#FDE68A', text: '#D97706' },
@@ -37,11 +46,16 @@ export default function AdminPricesPage() {
 
   function startEdit(table, index, row) {
     setEdit({ table, index });
-    setDraft({ vendorCost: String(row.vendorCost), parentPrice: String(row.parentPrice) });
+    // An unknown cost opens as an empty field, not the string "null".
+    setDraft({
+      vendorCost: isKnown(row.vendorCost) ? String(row.vendorCost) : '',
+      parentPrice: String(row.parentPrice),
+    });
   }
 
   function saveEdit() {
-    const vc = parseFloat(draft.vendorCost) || 0;
+    // Blank stays unknown rather than collapsing to a real RM 0.00 cost.
+    const vc = draft.vendorCost.trim() === '' ? null : (parseFloat(draft.vendorCost) || 0);
     const pp = parseFloat(draft.parentPrice) || 0;
     if (editRow.table === 'chefs') {
       setChefs(prev => prev.map((r, i) => i === editRow.index ? { ...r, vendorCost: vc, parentPrice: pp } : r));
@@ -60,8 +74,14 @@ export default function AdminPricesPage() {
   }, {});
 
   const totalMenuRevenue = menu.reduce((s, r) => s + r.parentPrice, 0);
-  const totalMenuCost    = menu.reduce((s, r) => s + r.vendorCost, 0);
-  const totalMarkup      = totalMenuRevenue - totalMenuCost;
+  // Only items with a cost on file can contribute to cost or margin totals —
+  // summing null as 0 would report the entire revenue as profit.
+  const costed        = menu.filter(r => isKnown(r.vendorCost));
+  const missingCosts  = menu.length - costed.length;
+  const totalMenuCost = costed.length ? costed.reduce((s, r) => s + Number(r.vendorCost), 0) : null;
+  const totalMarkup   = costed.length
+    ? costed.reduce((s, r) => s + (r.parentPrice - Number(r.vendorCost)), 0)
+    : null;
 
   return (
     <main style={{ background: '#FAFAFA', minHeight: '100dvh', paddingBottom: 40 }}>
@@ -90,9 +110,12 @@ export default function AdminPricesPage() {
         {/* Summary cards */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
           {[
-            { label:t('prices.totalVendorCost'), value: fmt(totalMenuCost),    sub:t('prices.sumCost'),   color:'#1565C0' },
+            { label:t('prices.totalVendorCost'), value: fmt(totalMenuCost),
+              sub: missingCosts ? t('prices.missingCosts', { n: missingCosts }) : t('prices.sumCost'), color:'#1565C0' },
             { label:t('prices.totalParentPrice'),value: fmt(totalMenuRevenue), sub:t('prices.sumParent'), color:'#1B5E20' },
-            { label:t('prices.totalMarkup'),     value: fmt(totalMarkup),      sub:t('prices.avgMargin', { x: ((totalMarkup/totalMenuCost)*100).toFixed(0) }), color:'#D97706' },
+            { label:t('prices.totalMarkup'),     value: fmt(totalMarkup),
+              sub: totalMarkup === null ? t('prices.noCostList')
+                 : t('prices.avgMargin', { x: ((totalMarkup/totalMenuCost)*100).toFixed(0) }), color:'#D97706' },
           ].map(c => (
             <div key={c.label} style={{ background:'#fff', borderRadius:12, padding:'14px 12px', border:'1px solid #F3F4F6', textAlign:'center' }}>
               <p style={{ fontSize:10, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.04em', margin:'0 0 6px' }}>{c.label}</p>
@@ -185,7 +208,7 @@ export default function AdminPricesPage() {
                         <>
                           <td style={{ ...S.td, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{fmt(row.vendorCost)}</td>
                           <td style={{ ...S.td, textAlign:'right', fontWeight:700, fontVariantNumeric:'tabular-nums' }}>{fmt(row.parentPrice)}</td>
-                          <td style={{ ...S.td, textAlign:'right', color:'#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>+{fmt(mu)}</td>
+                          <td style={{ ...S.td, textAlign:'right', color: mu === null ? '#9CA3AF' : Number(mu) < 0 ? '#DC2626' : '#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>{mu === null ? UNKNOWN : Number(mu) < 0 ? `-${fmt(Math.abs(Number(mu)))}` : `+${fmt(mu)}`}</td>
                           <td style={{ ...S.td, textAlign:'center' }}><MarkupBadge value={mp} /></td>
                           <td style={S.td}>
                             <button onClick={() => startEdit('chefs', i, row)} style={S.editBtn}>{t('common.edit')}</button>
@@ -213,7 +236,11 @@ export default function AdminPricesPage() {
                 <span style={{ fontSize:12, color:'#9CA3AF' }}>{t('adminMenu.items', { n: items.length })}</span>
                 <span style={{ marginLeft:'auto', fontSize:12, color:'#6B7280' }}>
                   {t('prices.avgMarkup')} <strong style={{ color:'#1B5E20' }}>
-                    {(items.reduce((s,r)=>s+parseFloat(pct(r.vendorCost,r.parentPrice)),0)/items.length).toFixed(0)}%
+                    {(() => {
+                      const known = items.map(r => pct(r.vendorCost, r.parentPrice)).filter(p => p !== null);
+                      if (!known.length) return UNKNOWN;
+                      return `${(known.reduce((s, p) => s + parseFloat(p), 0) / known.length).toFixed(0)}%`;
+                    })()}
                   </strong>
                 </span>
               </div>
@@ -267,7 +294,7 @@ export default function AdminPricesPage() {
                           <>
                             <td style={{ ...S.td, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{fmt(row.vendorCost)}</td>
                             <td style={{ ...S.td, textAlign:'right', fontWeight:700, fontVariantNumeric:'tabular-nums' }}>{fmt(row.parentPrice)}</td>
-                            <td style={{ ...S.td, textAlign:'right', color:'#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>+{fmt(mu)}</td>
+                            <td style={{ ...S.td, textAlign:'right', color: mu === null ? '#9CA3AF' : Number(mu) < 0 ? '#DC2626' : '#16A34A', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>{mu === null ? UNKNOWN : Number(mu) < 0 ? `-${fmt(Math.abs(Number(mu)))}` : `+${fmt(mu)}`}</td>
                             <td style={{ ...S.td, textAlign:'center' }}><MarkupBadge value={mp} /></td>
                             <td style={S.td}>
                               <button onClick={() => startEdit('menu', globalIdx, row)} style={S.editBtn}>{t('common.edit')}</button>
@@ -288,6 +315,14 @@ export default function AdminPricesPage() {
 }
 
 function MarkupBadge({ value }) {
+  // No cost on file — show a neutral placeholder, not a computed margin.
+  if (value === null || value === undefined) {
+    return (
+      <span style={{ display:'inline-block', fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:12, background:'#F3F4F6', color:'#9CA3AF' }}>
+        {UNKNOWN}
+      </span>
+    );
+  }
   const v = parseFloat(value);
   const bg    = v >= 25 ? '#DCFCE7' : v >= 10 ? '#FEF9C3' : '#FEE2E2';
   const color = v >= 25 ? '#16A34A' : v >= 10 ? '#D97706' : '#DC2626';

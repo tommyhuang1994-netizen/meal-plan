@@ -1,7 +1,7 @@
 // Seeds the database from the existing static modules in lib/.
 //
 // This is the bridge off the hardcoded data: lib/menuData.js, lib/pricingData.js
-// and lib/schoolCalendar.js stay as the source of truth for June 2026 until the
+// and lib/schoolCalendar.js stay as the source of truth for September 2026 until the
 // admin UI can create cycles itself. Idempotent — safe to re-run.
 // Loaded here too so `node prisma/seed.js` works outside the Prisma CLI.
 import { config } from 'dotenv';
@@ -11,7 +11,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { MENU_BY_DATE } from '../lib/menuData.js';
 import { CHEFS_PRICING, MENU_PRICING } from '../lib/pricingData.js';
-import { CLASS_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
+import { CALENDAR_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
 import { ORDERS } from '../lib/mockOrders.js';
 import { hashPassword } from '../lib/password.js';
 
@@ -20,7 +20,7 @@ const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const CYCLE_YEAR = 2026;
-const CYCLE_MONTH = 6; // June
+const CYCLE_MONTH = 9; // September
 
 const MEAL_TYPE = { Breakfast: 'BREAKFAST', Lunch: 'LUNCH', Brunch: 'BRUNCH' };
 const GROUP = {
@@ -31,7 +31,7 @@ const GROUP = {
 };
 
 /// @db.Date reads the UTC calendar date off a JS Date. Building with Date.UTC
-/// keeps "2026-06-22" as the 22nd regardless of the machine's timezone.
+/// keeps "2026-09-22" as the 22nd regardless of the machine's timezone.
 const utcDate = (iso) => new Date(`${iso}T00:00:00.000Z`);
 
 // ── Descriptions ──────────────────────────────────────────────────────────────
@@ -52,6 +52,22 @@ function collectDescriptions() {
 async function seedMenuItems() {
   const descriptions = collectDescriptions();
   const byName = {};
+
+  // MenuItem.vendorCost is NOT NULL. If lib/pricingData.js ever carries a null
+  // cost again (a new meal type, a month whose cost list has not arrived), stop
+  // with an actionable message rather than dying on a Prisma constraint error
+  // halfway through the seed.
+  const uncosted = Object.entries(MENU_PRICING).filter(([, p]) => p.vendorCost == null);
+  if (uncosted.length) {
+    throw new Error(
+      `${uncosted.length} of ${Object.keys(MENU_PRICING).length} menu items have no vendorCost ` +
+      `(e.g. "${uncosted[0][0]}").\n` +
+      `MenuItem.vendorCost is NOT NULL, so seeding cannot proceed. Either:\n` +
+      `  1. fill in the real costs in lib/pricingData.js, or\n` +
+      `  2. make the column optional (vendorCost Decimal? in prisma/schema.prisma) + migrate.\n` +
+      `Costs were deliberately left null rather than guessed — see the note in lib/pricingData.js.`
+    );
+  }
 
   for (const [name, price] of Object.entries(MENU_PRICING)) {
     const item = await prisma.menuItem.upsert({
@@ -122,9 +138,9 @@ async function seedMenuOfferings(itemsByName) {
 
 async function seedCalendarBlocks() {
   let count = 0;
-  for (const group of Object.keys(CLASS_GROUPS)) {
+  for (const group of Object.keys(CALENDAR_GROUPS)) {
     for (const block of getBlockedDaysList(group)) {
-      const date = utcDate(`2026-06-${String(block.date).padStart(2, '0')}`);
+      const date = utcDate(`2026-09-${String(block.date).padStart(2, "0")}`);
       const data = {
         kind: block.type === 'break' ? 'BREAK' : 'HOLIDAY',
         name: block.name,
@@ -209,8 +225,10 @@ async function seedStudents(parent) {
 
 async function seedSettings() {
   const settings = [
-    // RM off when both breakfast and lunch are à-la-carte picks on the same day.
-    { key: 'combo_discount', value: '1.00' },
+    // No standalone combo discount: the only both-meals promotion is priced
+    // into the chefs_both plan itself (RM 18.00 vs RM 19.00), and it applies to
+    // Chef's Choice pairs only — never to two à-la-carte picks.
+    { key: 'combo_discount', value: '0.00' },
     { key: 'currency', value: 'MYR' },
     { key: 'timezone', value: 'Asia/Kuala_Lumpur' },
   ];

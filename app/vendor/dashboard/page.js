@@ -1,46 +1,45 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { ORDERS, DEPARTMENTS, DAY_LABELS, ALLERGY_LABELS } from '../../../lib/mockOrders';
-import { useT, fmtFullDate, weekdayFull } from '../../../lib/i18n';
+import { DEPARTMENTS, ALLERGY_LABELS } from '../../../lib/mockOrders';
+import {
+  MONTHS, DEFAULT_MONTH, monthLabel, servingDays, closedReason,
+  getOrdersForDate, getOrderCounts,
+} from '../../../lib/orderStore';
+import { useT, fmtDateInMonth, weekdayFullInMonth } from '../../../lib/i18n';
 
-// ── June 2026 calendar helpers ────────────────────────────────────────────────
+// ── Calendar helpers (work for any month the store exposes) ──────────────────
 
-const YEAR  = 2026;
-const MONTH = 5; // June = index 5
+const monthMeta = (key) => MONTHS.find(m => m.key === key) ?? MONTHS[0];
 
-function getDaysInMonth(year, month) {
+function getDaysInMonth(monthKey) {
+  const { year, month } = monthMeta(monthKey);
   const days = [];
   const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
   const totalDays = new Date(year, month + 1, 0).getDate();
-  // blank slots before day 1
-  const blanks = firstDay === 0 ? 6 : firstDay - 1; // Mon-first grid
+  const blanks = firstDay === 0 ? 6 : firstDay - 1;   // Mon-first grid
   for (let i = 0; i < blanks; i++) days.push(null);
   for (let d = 1; d <= totalDays; d++) days.push(d);
   return days;
 }
 
-function weekdayKey(date) {
-  // date is 1-30, June 2026 starts on Monday
-  const dow = new Date(YEAR, MONTH, date).getDay(); // 0=Sun
-  const map = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
-  return map[dow] || null; // null = weekend
+function isWeekendDate(monthKey, date) {
+  const { year, month } = monthMeta(monthKey);
+  const dow = new Date(year, month, date).getDay();
+  return dow === 0 || dow === 6;
 }
 
-function dateLabel(date) {
-  const suffixes = ['th','st','nd','rd'];
-  const v = date % 100;
-  const s = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
-  const dayKey = weekdayKey(date);
-  return `${DAY_LABELS[dayKey]} - ${date}${s} June 2026`;
+function isFridayDate(monthKey, date) {
+  const { year, month } = monthMeta(monthKey);
+  return new Date(year, month, date).getDay() === 5;
 }
 
-function isCutoffPassed(date) {
+function isCutoffPassed(monthKey, date) {
   // Cutoff = 7 days before the meal date
-  const mealDate = new Date(YEAR, MONTH, date);
-  const cutoff   = new Date(mealDate);
+  const { year, month } = monthMeta(monthKey);
+  const cutoff = new Date(year, month, date);
   cutoff.setDate(cutoff.getDate() - 7);
   return new Date() > cutoff;
 }
@@ -59,23 +58,36 @@ const DEPT_COLORS = {
 export default function VendorDashboard() {
   const router = useRouter();
   const { t, lang } = useT();
-  const [selectedDate, setSelectedDate] = useState(null); // number 1-30
-  const [deptFilter, setDeptFilter]     = useState('All');
+  const [monthKey,     setMonthKey]    = useState(DEFAULT_MONTH);
+  const [selectedDate, setSelectedDate] = useState(null); // day number
+  const [deptFilter,   setDeptFilter]   = useState('All');
+  // Orders live in localStorage, which the server cannot read. Load them after
+  // mount so the first client render matches the server's and hydration holds.
+  const [orders, setOrders] = useState([]);
+  const [counts, setCounts] = useState({});
 
-  const calendarDays = getDaysInMonth(YEAR, MONTH);
-  const activeKey    = selectedDate ? weekdayKey(selectedDate) : null;
+  useEffect(() => { setCounts(getOrderCounts(monthKey)); }, [monthKey]);
+  useEffect(() => {
+    setOrders(selectedDate ? getOrdersForDate(monthKey, selectedDate) : []);
+  }, [monthKey, selectedDate]);
 
-  const rawOrders = activeKey ? (ORDERS[activeKey] || []) : [];
-  const filtered  = deptFilter === 'All' ? rawOrders : rawOrders.filter(o => o.dept === deptFilter);
-  const isFriday  = activeKey === 'Fri';
+  const calendarDays = getDaysInMonth(monthKey);
+  const filtered = deptFilter === 'All' ? orders : orders.filter(o => o.dept === deptFilter);
+  const isFriday = selectedDate ? isFridayDate(monthKey, selectedDate) : false;
 
   const bfOrders = filtered.filter(o => o.breakfast);
   const lnOrders = filtered.filter(o => o.lunch);
   const brOrders = filtered.filter(o => o.brunch);
+  const parentCount = filtered.filter(o => o.source === 'parent').length;
+
+  function pickMonth(key) {
+    setMonthKey(key);
+    setSelectedDate(null);   // a day number means nothing across months
+  }
 
   function openPrint() {
-    if (!selectedDate || !activeKey) return;
-    window.open(`/vendor/print/${activeKey}?dept=${deptFilter}&date=${selectedDate}`, '_blank');
+    if (!selectedDate) return;
+    window.open(`/vendor/print/${monthKey}?dept=${deptFilter}&date=${selectedDate}`, '_blank');
   }
 
   return (
@@ -95,9 +107,22 @@ export default function VendorDashboard() {
         {/* Calendar */}
         <div style={{ background: '#fff', borderRadius: 14, padding: '18px 20px', border: '1px solid #F3F4F6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{t('common.monthJune')}</h2>
+            {/* Month selector */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              {MONTHS.map(m => {
+                const on = monthKey === m.key;
+                return (
+                  <button key={m.key} onClick={() => pickMonth(m.key)} aria-pressed={on}
+                    style={{ padding: '7px 14px', borderRadius: 9, border: `1.5px solid ${on ? '#1B5E20' : '#E5E7EB'}`,
+                      background: on ? '#1B5E20' : '#fff', color: on ? '#fff' : '#374151',
+                      fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'all 150ms' }}>
+                    {monthLabel(m.key, lang)}
+                  </button>
+                );
+              })}
+            </div>
             {selectedDate && (
-              <span style={{ fontSize: 13, color: '#6B7280' }}>{fmtFullDate(lang, selectedDate)}</span>
+              <span style={{ fontSize: 13, color: '#6B7280' }}>{fmtDateInMonth(lang, monthKey, selectedDate)}</span>
             )}
           </div>
 
@@ -114,23 +139,24 @@ export default function VendorDashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
             {calendarDays.map((date, i) => {
               if (!date) return <div key={i} />;
-              const key     = weekdayKey(date);
-              const isWeekend = !key;
+              const isWeekend  = isWeekendDate(monthKey, date);
+              const closed     = closedReason(monthKey, date);
               const isSelected = selectedDate === date;
-              const hasOrders  = key && (ORDERS[key]?.length > 0);
-              const locked     = key && isCutoffPassed(date);
+              const hasOrders  = !isWeekend && !closed && (counts[date] ?? 0) > 0;
+              const locked     = !isWeekend && !closed && isCutoffPassed(monthKey, date);
 
               return (
                 <button
                   key={i}
-                  disabled={isWeekend}
+                  disabled={isWeekend || !!closed}
+                  title={closed || undefined}
                   onClick={() => setSelectedDate(date)}
                   style={{
                     aspectRatio: '1',
                     border: isSelected ? '2px solid #1B5E20' : '1px solid #F3F4F6',
                     borderRadius: 10,
-                    background: isSelected ? '#1B5E20' : isWeekend ? '#FAFAFA' : '#fff',
-                    cursor: isWeekend ? 'default' : 'pointer',
+                    background: isSelected ? '#1B5E20' : (isWeekend || closed) ? '#FAFAFA' : '#fff',
+                    cursor: (isWeekend || closed) ? 'default' : 'pointer',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
@@ -142,8 +168,11 @@ export default function VendorDashboard() {
                   }}>
                   <span style={{
                     fontSize: 14, fontWeight: isSelected ? 700 : 500,
-                    color: isSelected ? '#fff' : isWeekend ? '#D1D5DB' : '#111827',
+                    color: isSelected ? '#fff' : (isWeekend || closed) ? '#D1D5DB' : '#111827',
                   }}>{date}</span>
+                  {closed && !isSelected && (
+                    <span style={{ fontSize: 7, color: '#DC2626', lineHeight: 1, textAlign: 'center' }}>{closed}</span>
+                  )}
 
                   {/* Order count dot */}
                   {hasOrders && !isWeekend && (
@@ -199,12 +228,12 @@ export default function VendorDashboard() {
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z"/>
                 </svg>
-                {t('vendor.print', { day: weekdayFull(lang, selectedDate) })}
+                {t('vendor.print', { day: weekdayFullInMonth(lang, monthKey, selectedDate) })}
               </button>
             </div>
 
             {/* Cutoff notice */}
-            {isCutoffPassed(selectedDate) && (
+            {isCutoffPassed(monthKey, selectedDate) && (
               <div style={{ background: '#FEF9C3', border: '1px solid #FDE047', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#854D0E', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
                 <span><strong>{t('vendor.orderLockedTitle')}</strong>{t('vendor.orderLockedBody')}</span>
@@ -213,8 +242,13 @@ export default function VendorDashboard() {
 
             {/* Order tables */}
             <h3 style={{ fontSize: 15, fontWeight: 700, color: '#111827', margin: 0 }}>
-              {fmtFullDate(lang, selectedDate)}
+              {fmtDateInMonth(lang, monthKey, selectedDate)}
               <span style={{ fontSize: 13, fontWeight: 500, color: '#6B7280', marginLeft: 8 }}>· {t('vendor.orders', { n: filtered.length })}{deptFilter !== 'All' ? ` · ${deptFilter}` : ''}</span>
+              {parentCount > 0 && (
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#1B5E20', background: '#DCFCE7', borderRadius: 20, padding: '2px 9px', marginLeft: 8 }}>
+                  {t('vendor.fromParents', { n: parentCount })}
+                </span>
+              )}
             </h3>
 
             {isFriday ? (

@@ -1,12 +1,27 @@
-import { ORDERS, ALLERGY_LABELS, dayTitle } from '../../../../lib/mockOrders';
+import { ALLERGY_LABELS } from '../../../../lib/mockOrders';
+import { MONTHS, getOrdersForDate, CHEF_CHOICE } from '../../../../lib/orderStore';
+import { MENU_PRICING } from '../../../../lib/pricingData';
 
+// The [day] segment now carries a month key ("2026-09"); ?date= carries the day.
 export async function GET(request, { params }) {
-  const { day } = await params;
+  const { day: monthKey } = await params;
   const { searchParams } = new URL(request.url);
   const deptFilter = searchParams.get('dept') || 'All';
+  const dateParam  = parseInt(searchParams.get('date') ?? '', 10);
 
-  const isFriday = day === 'Fri';
-  const rawOrders = ORDERS[day] || [];
+  const meta = MONTHS.find(m => m.key === monthKey);
+  if (!meta || !Number.isFinite(dateParam)) {
+    return new Response('Unknown month or date', { status: 404 });
+  }
+
+  const dateObj  = new Date(meta.year, meta.month, dateParam);
+  const isFriday = dateObj.getDay() === 5;
+
+  // NOTE: this runs on the server, so it sees the generated sample orders only.
+  // Orders a parent submits live in that browser's localStorage and cannot
+  // reach here — they show in the dashboard but not on this printout until the
+  // orders are stored server-side.
+  const rawOrders = getOrdersForDate(monthKey, dateParam);
   const filtered = deptFilter === 'All' ? rawOrders : rawOrders.filter(o => o.dept === deptFilter);
 
   const bfOrders = filtered.filter(o => o.breakfast);
@@ -14,23 +29,56 @@ export async function GET(request, { params }) {
   const brOrders = filtered.filter(o => o.brunch);
   const maxRows  = isFriday ? brOrders.length : Math.max(bfOrders.length, lnOrders.length);
 
-  // Use the specific date if provided, otherwise fall back to generic label
-  const dateParam = searchParams.get('date');
-  let title;
-  if (dateParam) {
-    const d = parseInt(dateParam);
-    const suffixes = ['th','st','nd','rd'];
-    const v = d % 100;
-    const s = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
-    const dayName = { Mon:'Monday', Tue:'Tuesday', Wed:'Wednesday', Thu:'Thursday', Fri:'Friday' }[day] || day;
-    title = `${dayName} - ${d}${s} June 2026`;
-  } else {
-    title = dayTitle(day);
+  const MONTH_EN = ['January','February','March','April','May','June',
+                    'July','August','September','October','November','December'];
+  const WD = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const suffixes = ['th','st','nd','rd'];
+  const v = dateParam % 100;
+  const sfx = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
+  const title = `${WD[dateObj.getDay()]} - ${dateParam}${sfx} ${MONTH_EN[meta.month]} ${meta.year}`;
+
+  // ── Row helpers ────────────────────────────────────────────────────────────
+
+  // "CAMBRIDGE Year 5" / "CAMBRIDGE PLUS" / "STAFF" — group uppercased, class
+  // appended when the student has one.
+  function classCell(o) {
+    const group = (o.dept || '').toUpperCase();
+    return o.year ? `${group} ${o.year}` : group;
   }
 
-  // Build table rows HTML
-  function classCell(o) {
-    return o.year ? `${o.dept}<br>${o.year}` : o.dept;
+  // Bilingual meal label. A Chef's Choice slot names which meals it covers, so
+  // the kitchen can tell a both-meals plan from a single one at a glance. An
+  // à-la-carte pick is prefixed with its price, matching the order form.
+  function mealLabel(o, slot) {
+    const value = o[slot];
+    if (!value) return '';
+    if (value === CHEF_CHOICE) {
+      const both = o.breakfast === CHEF_CHOICE && o.lunch === CHEF_CHOICE;
+      if (both)             return "Chef's Choice (Breakfast &amp; Lunch) 厨师推荐（早餐与午餐）";
+      if (slot === 'breakfast') return "Chef's Choice (Breakfast) 厨师推荐（早餐）";
+      if (slot === 'lunch')     return "Chef's Choice (Lunch) 厨师推荐（午餐）";
+      return "Chef's Choice (Brunch) 厨师推荐（早午餐）";
+    }
+    const price = MENU_PRICING[value]?.parentPrice;
+    return price != null ? `RM${price} - ${value}` : value;
+  }
+
+  // Sort so identical meals sit together: both-meals Chef's Choice first, then
+  // single Chef's Choice, then dishes A-Z; students by class, then name.
+  function rank(o, slot) {
+    if (o[slot] !== CHEF_CHOICE) return 2;
+    return (o.breakfast === CHEF_CHOICE && o.lunch === CHEF_CHOICE) ? 0 : 1;
+  }
+  function groupBy(orders, slot) {
+    return [...orders].sort((a, b) => {
+      const r = rank(a, slot) - rank(b, slot);
+      if (r) return r;
+      const m = mealLabel(a, slot).localeCompare(mealLabel(b, slot));
+      if (m) return m;
+      const c = classCell(a).localeCompare(classCell(b), undefined, { numeric: true });
+      if (c) return c;
+      return a.name.localeCompare(b.name);
+    });
   }
 
   function allergyTags(o) {
@@ -42,25 +90,37 @@ export async function GET(request, { params }) {
     }).join('');
   }
 
+  const bfSorted = groupBy(bfOrders, 'breakfast');
+  const lnSorted = groupBy(lnOrders, 'lunch');
+  const brSorted = groupBy(brOrders, 'brunch');
+
+  // A thin rule wherever the meal changes, so each dish reads as one block.
+  // The two columns differ in length, so guard both ends before comparing.
+  const startsGroup = (list, i, slot) =>
+    i > 0 && !!list[i] && !!list[i - 1] &&
+    mealLabel(list[i], slot) !== mealLabel(list[i - 1], slot);
+
   const tableRows = isFriday
-    ? brOrders.map((o, i) => `
-        <tr class="${i % 2 === 0 ? 'odd' : 'even'}">
+    ? brSorted.map((o, i) => `
+        <tr class="${i % 2 === 0 ? 'odd' : 'even'}${startsGroup(brSorted, i, 'brunch') ? ' group-start' : ''}">
           <td class="c-name">${o.name}${o.allergies?.length ? `<br><span style="font-size:8pt">${allergyTags(o)}</span>` : ''}</td>
           <td class="c-class">${classCell(o)}</td>
-          <td class="c-meal">${o.brunch}</td>
+          <td class="c-meal">${mealLabel(o, 'brunch')}</td>
         </tr>`).join('')
     : Array.from({ length: maxRows }, (_, i) => {
-        const b = bfOrders[i];
-        const l = lnOrders[i];
+        const b = bfSorted[i];
+        const l = lnSorted[i];
         const shade = i % 2 === 0 ? 'odd' : 'even';
+        const bNew = startsGroup(bfSorted, i, 'breakfast');
+        const lNew = startsGroup(lnSorted, i, 'lunch');
         return `
         <tr class="${shade}">
-          <td class="c-name">${b ? b.name + (b.allergies?.length ? `<br>${allergyTags(b)}` : '') : ''}</td>
-          <td class="c-class">${b ? classCell(b) : ''}</td>
-          <td class="c-meal divider">${b ? b.breakfast : ''}</td>
-          <td class="c-name">${l ? l.name + (l.allergies?.length ? `<br>${allergyTags(l)}` : '') : ''}</td>
-          <td class="c-class">${l ? classCell(l) : ''}</td>
-          <td class="c-meal">${l ? l.lunch : ''}</td>
+          <td class="c-name${bNew ? ' group-start' : ''}">${b ? b.name + (b.allergies?.length ? `<br>${allergyTags(b)}` : '') : ''}</td>
+          <td class="c-class${bNew ? ' group-start' : ''}">${b ? classCell(b) : ''}</td>
+          <td class="c-meal divider${bNew ? ' group-start' : ''}">${b ? mealLabel(b, 'breakfast') : ''}</td>
+          <td class="c-name${lNew ? ' group-start' : ''}">${l ? l.name + (l.allergies?.length ? `<br>${allergyTags(l)}` : '') : ''}</td>
+          <td class="c-class${lNew ? ' group-start' : ''}">${l ? classCell(l) : ''}</td>
+          <td class="c-meal${lNew ? ' group-start' : ''}">${l ? mealLabel(l, 'lunch') : ''}</td>
         </tr>`;
       }).join('');
 
@@ -69,8 +129,8 @@ export async function GET(request, { params }) {
     : `<th>Name</th><th>Class</th><th class="divider">Breakfast</th><th>Name</th><th>Class</th><th>Lunch</th>`;
 
   const colgroup = isFriday
-    ? `<col style="width:30%"><col style="width:20%"><col style="width:50%">`
-    : `<col style="width:16%"><col style="width:12%"><col style="width:22%"><col style="width:16%"><col style="width:12%"><col style="width:22%">`;
+    ? `<col style="width:28%"><col style="width:20%"><col style="width:52%">`
+    : `<col style="width:15%"><col style="width:13%"><col style="width:22%"><col style="width:15%"><col style="width:13%"><col style="width:22%">`;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -175,6 +235,14 @@ export async function GET(request, { params }) {
     }
 
     .divider { border-right: 1.5pt solid #000; }
+
+    /* First row of each meal group gets a heavier top rule, so identical
+       orders read as one block the kitchen can count. */
+    .group-start { border-top: 1.2pt solid #000; }
+
+    /* The meal cell carries English + Chinese, so give it more room to breathe
+       than the class column and let it wrap rather than clip. */
+    .c-meal { white-space: normal; }
 
     tr.odd  td { background-color: #ffffff; }
     tr.even td { background-color: #F7F9FA; }

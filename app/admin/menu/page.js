@@ -13,7 +13,7 @@ function fmt(n)  { return `RM ${Number(n).toFixed(2)}`; }
 const GRID_HEADERS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 function calendarCells() {
-  const firstDow = new Date(2026, 5, 1).getDay();
+  const firstDow = new Date(2026, 8, 1).getDay();
   const blanks   = firstDow === 0 ? 6 : firstDow - 1;
   const cells = [];
   for (let i = 0; i < blanks; i++) cells.push(null);
@@ -117,7 +117,7 @@ export default function AdminMenuPage() {
           <div style={{ display:'grid', gridTemplateColumns:'repeat(7, 1fr)', gap:4 }}>
             {cells.map((date, i) => {
               if (!date) return <div key={i} />;
-              const dow     = new Date(2026, 5, date).getDay();
+              const dow     = new Date(2026, 8, date).getDay();
               const weekend = dow === 0 || dow === 6;
               const isSchool = schoolDays.includes(date);
               const isSel   = activeDate === date;

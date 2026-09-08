@@ -1,11 +1,26 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useT, fmtMonthYear } from '../../lib/i18n';
+import { useT, fmtMonthYear, fmtDateInMonth } from '../../lib/i18n';
+import { getParentOrders, getParentOrderDetail, updateParentOrderDay, monthLabel, DEFAULT_MONTH, CHEF_CHOICE } from '../../lib/orderStore';
+import { priceForDate, dishNamesFor } from '../../lib/pricing';
+import DayMenuSheet from './DayMenuSheet';
+import { isDateLocked, formatDeadline } from '../../lib/cutoff';
 
-const NEXT_MONTH = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
-const HAS_ORDERED_NEXT_MONTH = false;
+// "Cambridge Year 5", or just "Cambridge Plus" — the division sometimes already
+// carries the group name, and repeating it reads as "Cambridge Cambridge Plus".
+// Days on this order that are still before their cut-off.
+function editableCountOf(detailDates) {
+  return detailDates.filter(iso => !isDateLocked(iso)).length;
+}
+
+function classLabel(o) {
+  if (!o.division) return o.classGroup;
+  return o.division.startsWith(o.classGroup) ? o.division : `${o.classGroup} ${o.division}`;
+}
 
 // cutoffDate = 1st of the order month minus 7 days (e.g. June order → cutoff May 25)
 const MOCK_ORDERS = [
@@ -24,8 +39,43 @@ const STATUS_CONFIG = {
 
 export default function ParentPage() {
   const { t, lang } = useT();
-  const showCTA = !HAS_ORDERED_NEXT_MONTH;
-  const NEXT_MONTH_LABEL = fmtMonthYear(lang, NEXT_MONTH);
+
+  // Orders live in localStorage, which the server cannot read — load after
+  // mount so the first client render matches the server's.
+  const [orders, setOrders]     = useState([]);
+  const [openId, setOpenId]     = useState(null);
+  const [detail, setDetail]     = useState([]);
+
+  const [editable, setEditable] = useState({});   // receipt id -> open day count
+  const [editDay, setEditDay] = useState(null);  // { order, row } being changed
+
+  useEffect(() => {
+    const list = getParentOrders();
+    setOrders(list);
+    // Counting open days needs each order's dates, so gather them once here
+    // rather than re-reading storage on every render.
+    const counts = {};
+    for (const o of list) {
+      const dates = getParentOrderDetail(o.studentName, o.monthKey).map(r => r.date);
+      counts[o.id] = editableCountOf(dates);
+    }
+    setEditable(counts);
+  }, []);
+
+  const editableCount = (o) => editable[o.id] ?? 0;
+  useEffect(() => {
+    if (!openId) { setDetail([]); return; }
+    const o = orders.find(x => x.id === openId);
+    setDetail(o ? getParentOrderDetail(o.studentName, o.monthKey) : []);
+  }, [openId, orders]);
+
+  // The CTA points at the open ordering cycle, and stands down once every
+  // order for it has been placed.
+  const cycleOrders = orders.filter(o => o.monthKey === DEFAULT_MONTH);
+  const hasOrdered = cycleOrders.length > 0;
+  const showCTA = true;   // ordering again replaces the current order
+  const NEXT_MONTH_LABEL = monthLabel(DEFAULT_MONTH, lang);
+  const grandTotal = cycleOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   return (
     <main style={{ background: '#FAFAFA', minHeight: '100dvh' }}>
@@ -57,7 +107,7 @@ export default function ParentPage() {
               <div>
                 <p style={styles.ctaLabel}>{t('parent.orderFor')}</p>
                 <p style={styles.ctaMonth}>{NEXT_MONTH_LABEL}</p>
-                <p style={styles.ctaHint}>{t('parent.notSubmitted')}</p>
+                <p style={styles.ctaHint}>{hasOrdered ? t('parent.alreadyOrdered') : t('parent.notSubmitted')}</p>
               </div>
             </div>
             <Link
@@ -66,9 +116,132 @@ export default function ParentPage() {
               onMouseEnter={e => e.currentTarget.style.background = '#145A32'}
               onMouseLeave={e => e.currentTarget.style.background = '#1B5E20'}
             >
-              {t('parent.placeOrder')}
+              {hasOrdered ? t('parent.changeOrder') : t('parent.placeOrder')}
             </Link>
           </div>
+        )}
+
+        {/* Orders placed from this browser */}
+        {orders.length > 0 && (
+          <section>
+            <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
+              <h2 style={styles.sectionTitle}>{t('parent.myOrders')}</h2>
+              {cycleOrders.length > 0 && (
+                <span style={{ fontSize:13, color:'#6B7280' }}>
+                  {t('parent.monthTotal', { month: monthLabel(DEFAULT_MONTH, lang) })}
+                  <strong style={{ color:'#1B5E20', marginLeft:6, fontSize:15 }}>{fmtRM(grandTotal)}</strong>
+                </span>
+              )}
+            </div>
+
+            <div style={styles.orderList}>
+              {orders.map(o => {
+                const isOpen = openId === o.id;
+                return (
+                  <div key={o.id} style={styles.orderCard}>
+                    <div style={styles.orderTop}>
+                      <div style={{ minWidth:0 }}>
+                        <p style={styles.mealName}>{monthLabel(o.monthKey, lang)}</p>
+                        <p style={styles.childName}>
+                          <svg width="12" height="12" fill="none" stroke="#6B7280" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 4, flexShrink: 0 }}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          {o.studentName}
+                          {o.classGroup && (
+                            <span style={{ color:'#9CA3AF', marginLeft:6 }}>· {classLabel(o)}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div style={{ textAlign:'right', flexShrink:0 }}>
+                        <p style={{ margin:0, fontSize:19, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</p>
+                        <p style={{ margin:'2px 0 0', fontSize:12, color:'#9CA3AF' }}>{t('parent.schoolDays', { n: o.dayCount })}</p>
+                      </div>
+                    </div>
+
+                    {o.planLabel && (
+                      <p style={{ margin:'8px 0 0', fontSize:12.5, color:'#6B7280' }}>{o.planLabel}</p>
+                    )}
+
+                    <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                      <button onClick={() => setOpenId(isOpen ? null : o.id)} aria-expanded={isOpen}
+                        style={{ background:'none', border:'none', padding:0, cursor:'pointer',
+                          color:'#1B5E20', fontSize:13, fontWeight:700, display:'flex', alignItems:'center', gap:5 }}>
+                        {isOpen ? t('parent.hideDays') : t('parent.viewDays', { n: o.dayCount })}
+                        <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"
+                          style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition:'transform 180ms' }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {/* Change this child's order. Only dates still open can
+                          actually be altered — the order page enforces it. */}
+                      {editableCount(o) > 0 ? (
+                        <Link href={`/parent/order?child=${encodeURIComponent(o.studentName)}`}
+                          style={{ marginLeft:'auto', color:'#1B5E20', fontSize:13, fontWeight:700, textDecoration:'none',
+                            border:'1.5px solid #1B5E20', borderRadius:8, padding:'5px 12px' }}>
+                          {t('parent.changeOrder')}
+                        </Link>
+                      ) : (
+                        <span style={{ marginLeft:'auto', color:'#9CA3AF', fontSize:12, fontWeight:600 }}>
+                          {t('parent.allClosed')}
+                        </span>
+                      )}
+                    </div>
+                    {editableCount(o) > 0 && (
+                      <p style={{ margin:'6px 0 0', fontSize:11.5, color:'#9CA3AF' }}>
+                        {t('parent.editableDays', { n: editableCount(o), total: o.dayCount })}
+                      </p>
+                    )}
+
+                    {isOpen && (
+                      <div style={{ marginTop:10, borderTop:'1px solid #F3F4F6', paddingTop:10, display:'flex', flexDirection:'column', gap:8 }}>
+                        {detail.map(d => {
+                          const day = parseInt(d.date.slice(8), 10);
+                          const meals = [
+                            d.breakfast && `${t('meal.breakfast')}: ${d.breakfast === CHEF_CHOICE ? t('order.chefsChoice') : d.breakfast}`,
+                            d.lunch     && `${t('meal.lunch')}: ${d.lunch === CHEF_CHOICE ? t('order.chefsChoice') : d.lunch}`,
+                            d.brunch    && `${t('meal.brunch')}: ${d.brunch === CHEF_CHOICE ? t('order.chefsChoice') : d.brunch}`,
+                          ].filter(Boolean);
+                          return (
+                            <div key={d.date} style={{ display:'flex', gap:10, alignItems:'flex-start', justifyContent:'space-between' }}>
+                              <div style={{ minWidth:0 }}>
+                                <p style={{ margin:0, fontSize:12.5, fontWeight:600, color:'#374151' }}>
+                                  {fmtDateInMonth(lang, o.monthKey, day, false)}
+                                </p>
+                                {meals.map(m => (
+                                  <p key={m} style={{ margin:'1px 0 0', fontSize:12, color:'#6B7280', lineHeight:1.45 }}>{m}</p>
+                                ))}
+                              </div>
+                              <div style={{ textAlign:'right', flexShrink:0 }}>
+                                <span style={{ fontSize:13, fontWeight:600, color:'#111827', fontVariantNumeric:'tabular-nums' }}>
+                                  {fmtRM(d.price)}
+                                </span>
+                                {isDateLocked(d.date) ? (
+                                  <p style={{ margin:'2px 0 0', fontSize:10.5, color:'#9CA3AF', fontWeight:600 }}>
+                                    {t('parent.dayClosed')}
+                                  </p>
+                                ) : (
+                                  <button onClick={() => setEditDay({ order: o, row: d })}
+                                    style={{ marginTop:3, background:'#fff', border:'1.5px solid #1B5E20', color:'#1B5E20',
+                                      borderRadius:7, padding:'3px 10px', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>
+                                    {t('parent.change')}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid #E5E7EB', paddingTop:9, marginTop:2 }}>
+                          <span style={{ fontSize:13.5, fontWeight:700, color:'#111827' }}>{t('parent.total')}</span>
+                          <span style={{ fontSize:16, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         )}
 
         {/* Order History */}
@@ -136,6 +309,34 @@ export default function ParentPage() {
           )}
         </section>
       </div>
+
+      {/* Per-day editor, opened from a "Change" button on an order row */}
+      {editDay && (
+        <DayMenuSheet
+          iso={editDay.row.date}
+          monthKey={editDay.order.monthKey}
+          sel={editDay.row.sel}
+          onClose={() => setEditDay(null)}
+          onSave={(sel) => {
+            const iso = editDay.row.date;
+            const { price, discount } = priceForDate(iso, sel);
+            const names = dishNamesFor(iso, sel);
+            updateParentOrderDay({
+              studentName: editDay.order.studentName,
+              monthKey: editDay.order.monthKey,
+              date: iso,
+              sel,
+              ...names,
+              price: price - discount,
+            });
+            // Re-read so the card total and the day list both reflect the change.
+            const list = getParentOrders();
+            setOrders(list);
+            setDetail(getParentOrderDetail(editDay.order.studentName, editDay.order.monthKey));
+            setEditDay(null);
+          }}
+        />
+      )}
     </main>
   );
 }

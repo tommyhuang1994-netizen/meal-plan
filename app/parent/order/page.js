@@ -3,21 +3,23 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { MENU_BY_DATE, isFridayDate, dateKey } from '../../../lib/menuData';
-import { CLASS_GROUPS, getAvailableDays, isDateAvailable, getHolidayInfo, getBlockedDaysList, TERM_BREAK_NOTICE } from '../../../lib/schoolCalendar';
+import { CLASS_GROUPS, CLASS_DIVISIONS, requiresDivision, getAvailableDays, isDateAvailable, getHolidayInfo, getBlockedDaysList, TERM_BREAK_NOTICE } from '../../../lib/schoolCalendar';
 import { MEAL_SET_DAILY_PRICE } from '../../../lib/pricingData';
+import { CHEFS_PRICE, CHEFS_BRUNCH, fmt, mealPicked, isDatePicked, mealCost, priceForDate, dishNamesFor } from '../../../lib/pricing';
+import { saveParentOrder, getParentOrderForEdit, DEFAULT_MONTH } from '../../../lib/orderStore';
+import { isDateLocked, formatDeadline, CUTOFF_DAYS } from '../../../lib/cutoff';
 import { useT, fmtFullDate } from '../../../lib/i18n';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const KIDS = ['Ahmad Irfan', 'Nur Aisyah'];
-const COMBO_DISCOUNT = 1.00;
-const CHEFS_PRICE    = { chefs_both: 10.00, chefs_bf: 4.00, chefs_ln: 6.00 };
-const CHEFS_BRUNCH   = 8.00;
-const ALL_CLASSES    = Object.values(CLASS_GROUPS);
+const ALL_CLASSES = Object.values(CLASS_GROUPS);
 
 // Derived per class group
 function getClassDays(classGroup) {
-  const all    = getAvailableDays(classGroup);
+  // Only days still open to ordering count towards a plan's month total — a
+  // date past its cut-off cannot be bought, so charging for it would be wrong.
+  const all    = getAvailableDays(classGroup).filter(d => !isDateLocked(dateKey(d)));
   const nonFri = all.filter(d => !isFridayDate(d));
   const fri    = all.filter(d =>  isFridayDate(d));
   return { all, nonFri, fri };
@@ -26,19 +28,8 @@ function getClassDays(classGroup) {
 // Per-date ordering: each meal slot is independently Chef's Choice or custom
 // (à-la-carte). On weekdays a single "Chef's Choice — Both Meals" flag can cover
 // breakfast + lunch at the bundle rate and locks out per-meal custom picks.
-// Each slot value is { mode:'chef' } | { mode:'custom', id } | undefined.
-// Friday is brunch-only (no "both"); chef brunch = CHEFS_BRUNCH.
-function fmt(n) { return `RM ${Number(n).toFixed(2)}`; }
-
-// A meal slot counts as ordered if it's Chef's Choice or custom with an item.
-function mealPicked(m) {
-  return !!m && (m.mode === 'chef' || (m.mode === 'custom' && !!m.id));
-}
-// A date counts as ordered if Chef's-Both is on or any meal slot is picked.
-function isDatePicked(sel) {
-  if (!sel) return false;
-  return !!sel.chefBoth || mealPicked(sel.breakfast) || mealPicked(sel.lunch) || mealPicked(sel.brunch);
-}
+// The slot shape and every rate now live in lib/pricing.js, shared with the
+// per-day edit sheet on /parent.
 
 // Build whole-month selections from the bulk toggles. `both` = Chef's Choice
 // Meal Set (both meals); `bf`/`ln` = single-meal sets. Either single-meal set (or
@@ -47,6 +38,8 @@ function buildWholeMonth(classGroup, { both = false, bf = false, ln = false }) {
   const ds = {};
   for (const day of getAvailableDays(classGroup)) {
     const k = dateKey(day);
+    if (isDateLocked(k)) continue;      // past its cut-off — cannot be ordered
+
     if (isFridayDate(day)) {
       if (both || bf || ln) ds[k] = { brunch: { mode: 'chef' } };
     } else if (both) {
@@ -79,6 +72,13 @@ function isWholeMonthBoth(classGroup, ds) {
   return true;
 }
 
+// The selections a parent can no longer touch, kept across any plan change.
+function lockedSelections(ds) {
+  const out = {};
+  for (const k of Object.keys(ds || {})) if (isDateLocked(k)) out[k] = ds[k];
+  return out;
+}
+
 // Drop every Friday key — the "I'll choose" (custom) plan doesn't offer Friday
 // brunch, so its selections must never carry one (e.g. left over from a Chef plan).
 function stripFridays(ds) {
@@ -96,7 +96,7 @@ function calendarCells() {
   const cells = [];
   let started = false;
   for (let d = 1; d <= 30; d++) {
-    const dow = new Date(2026, 5, d).getDay(); // 0=Sun … 6=Sat
+    const dow = new Date(2026, 8, d).getDay(); // 0=Sun … 6=Sat
     if (dow === 0 || dow === 6) continue;      // skip weekends
     if (!started) {
       for (let b = 0; b < dow - 1; b++) cells.push(null); // align to Monday start
@@ -124,6 +124,7 @@ const ALLERGY_OPTIONS = [
 
 const initChild = () => ({
   classGroup:     null,
+  division:       null,  // Cambridge only: 'Year 1'…'Year 11' or 'Cambridge Plus'
   mealSet:        false, // plan: Chef's Choice Meal Set — both meals, whole-month promo
   bfSet:          false, // plan: Chef's Choice breakfast, whole month (+ Friday brunch)
   lnSet:          false, // plan: Chef's Choice lunch, whole month (+ Friday brunch)
@@ -135,23 +136,13 @@ const initChild = () => ({
 
 // ── Pricing ───────────────────────────────────────────────────────────────────
 
-// Price one meal slot: chef = flat chef rate, custom = the picked item's price.
-function mealCost(slot, chefRate, items) {
-  if (!slot) return 0;
-  if (slot.mode === 'chef') return chefRate;
-  if (slot.mode === 'custom' && slot.id) return items?.find(x => x.id === slot.id)?.price ?? 0;
-  return 0;
-}
-
 function calcChild(data) {
-  const { classGroup, dateSelections, mealSet } = data;
+  const { classGroup, division, dateSelections, mealSet } = data;
   if (!classGroup) return { total: 0, discount: 0, isComplete: false, hintKey: 'order.selectClassGroup', selectedCount: 0 };
-
-  // Chef's Choice Meal Set — promo rate per available study day. Cambridge and
-  // Homeschool/Plus differ here because their day counts differ.
-  if (mealSet) {
-    const days = getAvailableDays(classGroup).length;
-    return { total: days * MEAL_SET_DAILY_PRICE, discount: 0, isComplete: true, hintKey: null, selectedCount: days };
+  // Cambridge splits into Year 1–11 and Cambridge Plus; the class must be named
+  // before the order is complete. Homeschool and Plus have no such split.
+  if (requiresDivision(classGroup) && !division) {
+    return { total: 0, discount: 0, isComplete: false, hintKey: 'order.selectClass', selectedCount: 0 };
   }
 
   let total = 0, discount = 0;
@@ -159,22 +150,9 @@ function calcChild(data) {
   // Price every date the parent actually ordered (Chef's Choice = flat daily
   // rate; custom = à-la-carte). Holidays are included — they're not blocked.
   for (const key of Object.keys(dateSelections)) {
-    const sel = dateSelections[key];
-    if (!isDatePicked(sel)) continue;
-    const dayM   = MENU_BY_DATE[key];
-    const dayNum = parseInt(key.split('-')[2], 10);
-
-    if (isFridayDate(dayNum)) {
-      total += mealCost(sel.brunch, CHEFS_BRUNCH, dayM?.brunch);
-    } else if (sel.chefBoth) {
-      total += CHEFS_PRICE.chefs_both;
-    } else {
-      total += mealCost(sel.breakfast, CHEFS_PRICE.chefs_bf, dayM?.breakfast);
-      total += mealCost(sel.lunch,     CHEFS_PRICE.chefs_ln, dayM?.lunch);
-      // Combo discount only when both meals are custom item picks.
-      if (sel.breakfast?.mode === 'custom' && sel.breakfast?.id &&
-          sel.lunch?.mode === 'custom'     && sel.lunch?.id) discount += COMBO_DISCOUNT;
-    }
+    const d = priceForDate(key, dateSelections[key]);
+    total    += d.price;
+    discount += d.discount;
   }
   total -= discount;
 
@@ -192,20 +170,105 @@ export default function PlaceOrderPage() {
   const [activeChild, setActiveChild] = useState(KIDS[0]);
   const [childData,   setChildData]   = useState(Object.fromEntries(KIDS.map(k => [k, initChild()])));
   const [submitted,   setSubmitted]   = useState(false);
+  const [editing,     setEditing]     = useState(false);
+
+  // Re-open an order that has already been placed. Orders live in
+  // localStorage, so this can only run after mount — starting from the blank
+  // form on both server and first client render keeps hydration consistent.
+  useEffect(() => {
+    let found = false;
+    const next = {};
+    for (const kid of KIDS) {
+      const saved = getParentOrderForEdit(kid, DEFAULT_MONTH);
+      if (!saved) { next[kid] = initChild(); continue; }
+      found = true;
+      next[kid] = {
+        ...initChild(),
+        classGroup:     saved.classGroup,
+        division:       saved.division,
+        mealSet:        saved.planCode === 'meal_set',
+        bfSet:          saved.planCode === 'bf',
+        lnSet:          saved.planCode === 'ln',
+        illChoose:      saved.planCode === 'custom',
+        dateSelections: saved.dateSelections,
+        allergies:      Object.fromEntries((saved.allergies || []).map(a => [a, true])),
+        allergyNote:    saved.allergyNote || '',
+      };
+    }
+    if (found) { setChildData(next); setEditing(true); }
+
+    // /parent/order?child=Nur%20Aisyah opens straight on that child, so the
+    // "Change order" button on a specific order card lands in the right place.
+    // Read from location rather than useSearchParams — this page is statically
+    // prerendered, and useSearchParams would need a Suspense boundary.
+    const wanted = new URLSearchParams(window.location.search).get('child');
+    if (wanted && KIDS.includes(wanted)) setActiveChild(wanted);
+  }, []);
 
   function update(kid, fn) {
     setChildData(prev => ({ ...prev, [kid]: fn(prev[kid]) }));
   }
 
+  // Turn one child's per-date selections into the flat day rows the vendor
+  // dashboard reads. "Chef's Choice" is written through as a dish name so the
+  // kitchen sees what to prepare; a custom pick resolves to the chosen dish.
+  function toVendorDays(data) {
+    const rows = [];
+    for (const [iso, sel] of Object.entries(data.dateSelections)) {
+      if (!isDatePicked(sel)) continue;
+      const names = dishNamesFor(iso, sel);
+      const { price, discount } = priceForDate(iso, sel);
+      rows.push({
+        date: iso,
+        sel,                                   // raw slots, for re-opening the order
+        ...names,
+        price: price - discount,
+      });
+    }
+    return rows;
+  }
+
+  // Which plan the parent chose, for the receipt.
+  function planLabelFor(d) {
+    if (d.mealSet)   return t('order.planBothNote');
+    if (d.bfSet)     return t('order.planBfNote');
+    if (d.lnSet)     return t('order.planLnNote');
+    return t('order.planCustomNote');
+  }
+
+  // Persist every child's order so the vendor dashboard picks it up and the
+  // parent can read it back on /parent.
+  function submitOrder() {
+    if (!canSubmit) return;
+    for (const kid of KIDS) {
+      const d = childData[kid];
+      saveParentOrder({
+        studentName: kid,
+        dept: d.classGroup,
+        year: d.division ?? null,
+        allergies: Object.keys(d.allergies).filter(a => d.allergies[a]),
+        allergyNote: d.allergyNote,
+        days: toVendorDays(d),
+        total: allCalcs[kid].total,
+        planLabel: planLabelFor(d),
+        planCode: d.mealSet ? 'meal_set' : d.bfSet ? 'bf' : d.lnSet ? 'ln' : 'custom',
+      });
+    }
+    setSubmitted(true);
+  }
+
   // Pick a meal plan (radio, mutually exclusive). Chef plans pre-fill the calendar
   // so the cells tick automatically; "custom" (I'll choose) opens it empty.
   const selectPlan = (kid, plan) => update(kid, d => {
-    if (plan === 'meal_set') return { ...d, mealSet: true,  bfSet: false, lnSet: false, illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { both: true }) };
-    if (plan === 'bf')       return { ...d, mealSet: false, bfSet: true,  lnSet: false, illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { bf: true }) };
-    if (plan === 'ln')       return { ...d, mealSet: false, bfSet: false, lnSet: true,  illChoose: false, dateSelections: buildWholeMonth(d.classGroup, { ln: true }) };
+    // Days past their cut-off stay exactly as ordered, whatever plan is chosen.
+    const frozen = lockedSelections(d.dateSelections);
+    const withFrozen = (fresh) => ({ ...fresh, ...frozen });
+    if (plan === 'meal_set') return { ...d, mealSet: true,  bfSet: false, lnSet: false, illChoose: false, dateSelections: withFrozen(buildWholeMonth(d.classGroup, { both: true })) };
+    if (plan === 'bf')       return { ...d, mealSet: false, bfSet: true,  lnSet: false, illChoose: false, dateSelections: withFrozen(buildWholeMonth(d.classGroup, { bf: true })) };
+    if (plan === 'ln')       return { ...d, mealSet: false, bfSet: false, lnSet: true,  illChoose: false, dateSelections: withFrozen(buildWholeMonth(d.classGroup, { ln: true })) };
     // custom — keep existing manual picks if already custom, else start empty.
     // Fridays are dropped: the custom plan offers no Friday brunch.
-    return { ...d, mealSet: false, bfSet: false, lnSet: false, illChoose: true, dateSelections: stripFridays(d.illChoose ? d.dateSelections : {}) };
+    return { ...d, mealSet: false, bfSet: false, lnSet: false, illChoose: true, dateSelections: withFrozen(stripFridays(d.illChoose ? d.dateSelections : {})) };
   });
 
   const allCalcs   = Object.fromEntries(KIDS.map(k => [k, calcChild(childData[k])]));
@@ -237,8 +300,13 @@ export default function PlaceOrderPage() {
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
           {t('common.back')}
         </Link>
-        <h1 style={S.headerTitle}>{t('order.title')}</h1>
+        <h1 style={S.headerTitle}>{editing ? t('order.titleEdit') : t('order.title')}</h1>
         <p style={S.headerSub}>{t('order.subtitle')}</p>
+        {editing && (
+          <p style={{ margin:'2px 0 0', fontSize:12.5, color:'#1B5E20', fontWeight:600 }}>
+            {t('order.editingNote')}
+          </p>
+        )}
       </header>
 
       <div style={S.container}>
@@ -248,11 +316,19 @@ export default function PlaceOrderPage() {
           const data   = childData[kid];
           const calc   = allCalcs[kid];
           const isOpen = activeChild === kid;
+          // Cambridge needs a class picked before the plan and calendar mean
+          // anything; Homeschool and Plus are ready as soon as the group is set.
+          const groupReady = !!data.classGroup && (!requiresDivision(data.classGroup) || !!data.division);
 
           let statusLabel, statusStyle;
           if (calc.isComplete)         { statusLabel = t('order.ready', { total: fmt(calc.total) }); statusStyle = { bg:'#DCFCE7', color:'#166534' }; }
           else if (!data.classGroup)   { statusLabel = t('order.selectClassGroup');           statusStyle = { bg:'#F3F4F6', color:'#6B7280' }; }
-          else                         { statusLabel = `${data.classGroup} · ${calc.hintKey ? t(calc.hintKey) : t('order.pickDates')}`; statusStyle = { bg:'#E8F5E9', color:'#1B5E20' }; }
+          else {
+            // Name the class once picked, so "Cambridge · Year 5" reads back.
+            const who = data.division ? `${data.classGroup} · ${data.division}` : data.classGroup;
+            statusLabel = `${who} · ${calc.hintKey ? t(calc.hintKey) : t('order.pickDates')}`;
+            statusStyle = { bg:'#E8F5E9', color:'#1B5E20' };
+          }
 
           return (
             <div key={kid} style={{ ...S.childCard, border:`1.5px solid ${isOpen ? '#1B5E20' : '#F3F4F6'}` }}>
@@ -281,13 +357,35 @@ export default function PlaceOrderPage() {
                       const colors = { Cambridge:'#1565C0', Homeschool:'#1B5E20', Plus:'#558B2F' };
                       const c = colors[cls] || '#1B5E20';
                       return (
-                        <button key={cls} onClick={() => update(kid, d => ({ ...d, classGroup: cls, dateSelections: {} }))}
+                        <button key={cls} onClick={() => update(kid, d => ({ ...d, classGroup: cls, division: null, dateSelections: {} }))}
                           style={{ padding:'8px 16px', borderRadius:20, border:`2px solid ${active ? c : '#E5E7EB'}`, background: active ? c : '#fff', color: active ? '#fff' : '#374151', fontWeight:700, fontSize:13, cursor:'pointer', transition:'all 150ms', touchAction:'manipulation' }}>
                           {cls}
                         </button>
                       );
                     })}
                   </div>
+
+                  {/* Step 0b: class within the group. Cambridge only — the
+                      others are picked as the group itself. */}
+                  {requiresDivision(data.classGroup) && (
+                    <>
+                      <p style={S.bodyLabel}>{t('order.classLabel')}</p>
+                      <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:4 }}>
+                        {CLASS_DIVISIONS[data.classGroup].map(div => {
+                          const on = data.division === div;
+                          return (
+                            <button key={div} onClick={() => update(kid, d => ({ ...d, division: div }))} aria-pressed={on}
+                              style={{ padding:'7px 14px', borderRadius:18, border:`2px solid ${on ? '#1565C0' : '#E5E7EB'}`, background: on ? '#EFF6FF' : '#fff', color: on ? '#1565C0' : '#374151', fontWeight:on ? 700 : 600, fontSize:13, cursor:'pointer', transition:'all 150ms', touchAction:'manipulation' }}>
+                              {div}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {!data.division && (
+                        <p style={{ fontSize:12, color:'#9CA3AF', margin:'0 0 4px' }}>{t('order.selectClassPromptDiv')}</p>
+                      )}
+                    </>
+                  )}
 
                   {/* Term break notice */}
                   {data.classGroup && TERM_BREAK_NOTICE[data.classGroup] && (
@@ -297,7 +395,7 @@ export default function PlaceOrderPage() {
                     </div>
                   )}
 
-                  {data.classGroup && (() => {
+                  {groupReady && (() => {
                     const { nonFri, fri } = getClassDays(data.classGroup);
                     return (
                       <p style={{ fontSize:12, color:'#6B7280', margin:'0 0 4px' }}>
@@ -307,15 +405,16 @@ export default function PlaceOrderPage() {
                   })()}
 
                   {/* Calendar — only show after class selected */}
-                  {!data.classGroup && (
+                  {!groupReady && (
                     <p style={{ fontSize:13, color:'#9CA3AF', textAlign:'center', padding:'16px 0' }}>{t('order.selectClassPrompt')}</p>
                   )}
 
                   {/* Meal plan — radio list. Picking any Chef's Choice plan fills the
                       calendar (cells auto-tick); "I'll choose" opens it empty. */}
-                  {data.classGroup && (() => {
+                  {groupReady && (() => {
                     const { all, nonFri, fri } = getClassDays(data.classGroup);
-                    const mealSetTotal = all.length * MEAL_SET_DAILY_PRICE;
+                    // Must match calcChild: weekdays at the pair rate, Fridays at brunch.
+                    const mealSetTotal = nonFri.length * MEAL_SET_DAILY_PRICE + fri.length * CHEFS_BRUNCH;
                     const bfTotal = nonFri.length * CHEFS_PRICE.chefs_bf + fri.length * CHEFS_BRUNCH;
                     const lnTotal = nonFri.length * CHEFS_PRICE.chefs_ln + fri.length * CHEFS_BRUNCH;
                     const selected = data.mealSet ? 'meal_set' : data.bfSet ? 'bf' : data.lnSet ? 'ln' : data.illChoose ? 'custom' : null;
@@ -422,7 +521,7 @@ export default function PlaceOrderPage() {
               <p style={S.totalLabel}>{t('order.grandTotal')}</p>
               <p style={S.totalAmount}>{fmt(grandTotal)}</p>
             </div>
-            <button onClick={() => canSubmit && setSubmitted(true)} disabled={!canSubmit}
+            <button onClick={submitOrder} disabled={!canSubmit}
               style={{ ...S.submitBtn, opacity: canSubmit ? 1 : 0.45, cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
               {t('order.confirmOrder')}
             </button>
@@ -544,7 +643,7 @@ function DateCalendar({ classGroup, dateSelections, onSetDate, lockFriBrunch, di
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5, 1fr)', gap:3 }}>
           {CELLS.map((date, i) => {
             if (!date) return <div key={i} />;
-            const dow      = new Date(2026, 5, date).getDay();
+            const dow      = new Date(2026, 8, date).getDay();
             const info      = getHolidayInfo(classGroup, date);
             const available = isDateAvailable(classGroup, date);
             const isFri     = dow === 5;
@@ -562,6 +661,14 @@ function DateCalendar({ classGroup, dateSelections, onSetDate, lockFriBrunch, di
             }
 
             if (!available && info) {
+              if (isDateLocked(dateKey(date))) {
+                return (
+                  <div key={i} style={{ aspectRatio:'1', borderRadius:7, border:'1px solid #EEF0F2', background:'#F9FAFB',
+                    display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <span style={{ fontSize:11, color:'#C7CCD1' }}>{date}</span>
+                  </div>
+                );
+              }
               const isBreak = info.type === 'break';
               const accent  = isBreak ? '#D97706' : '#DC2626';
               const hKey    = dateKey(date);
@@ -592,6 +699,20 @@ function DateCalendar({ classGroup, dateSelections, onSetDate, lockFriBrunch, di
             const hasSel = isDatePicked(sel);
             const isOpen = openDate === date;
 
+            // Past its cut-off: shown, but no longer changeable.
+            if (isDateLocked(key)) {
+              return (
+                <div key={i} title={t('order.dateClosedTitle', { when: formatDeadline(key, lang) })}
+                  style={{ aspectRatio:'1', borderRadius:7, border:'1px solid #EEF0F2', background:'#F9FAFB',
+                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1 }}>
+                  <span style={{ fontSize:12, color:'#C7CCD1', fontWeight:500 }}>{date}</span>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#C7CCD1" strokeWidth="3">
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" />
+                  </svg>
+                </div>
+              );
+            }
+
             return (
               <button key={i} onClick={() => setOpenDate(isOpen ? null : date)}
                 style={{
@@ -611,6 +732,11 @@ function DateCalendar({ classGroup, dateSelections, onSetDate, lockFriBrunch, di
           })}
         </div>
       </div>
+
+      {/* Cut-off rule — why some dates are greyed out */}
+      <p style={{ fontSize:11, color:'#9CA3AF', margin:'8px 0 0', lineHeight:1.5 }}>
+        {t('order.cutoffNote', { days: CUTOFF_DAYS })}
+      </p>
 
       {disableFri && (
         <p style={{ fontSize:11, color:'#9CA3AF', margin:'-6px 2px 12px', lineHeight:1.4 }}>{t('order.friCustomDisabled')}</p>

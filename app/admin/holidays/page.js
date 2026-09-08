@@ -3,20 +3,21 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CLASS_GROUPS, getBlockedDaysList, getHolidayInfo } from '../../../lib/schoolCalendar';
+import { CALENDAR_GROUPS, getBlockedDaysList, getHolidayInfo } from '../../../lib/schoolCalendar';
 import { useT, fmtFullDate } from '../../../lib/i18n';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const YEAR  = 2026;
-const MONTH = 5; // June
-const GROUPS = Object.values(CLASS_GROUPS);
+const MONTH = 8; // September
+const GROUPS = Object.values(CALENDAR_GROUPS);
 const GRID_HEADERS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 const GROUP_COLORS = {
   Cambridge:  { bg: '#EFF6FF', border: '#BFDBFE', text: '#1D4ED8', active: '#1565C0' },
   Homeschool: { bg: '#F0FDF4', border: '#BBF7D0', text: '#166534', active: '#1B5E20' },
   Plus:       { bg: '#F1F8E9', border: '#C5E1A5', text: '#558B2F', active: '#558B2F' },
+  Staff:      { bg: '#FFF7ED', border: '#FED7AA', text: '#C2410C', active: '#C2410C' },
 };
 
 function getDays() {
@@ -275,7 +276,7 @@ export default function AdminHolidaysPage() {
                   <div key={date} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', background: isBreak ? '#FFFBEB' : '#FFF5F5', borderRadius:9, border:`1px solid ${isBreak ? '#FDE68A' : '#FEE2E2'}` }}>
                     <div style={{ width:38, height:38, borderRadius:8, background: isBreak ? '#FEF3C7' : '#FEE2E2', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
                       <span style={{ fontSize:15, fontWeight:800, color: isBreak ? '#D97706' : '#DC2626', lineHeight:1 }}>{date}</span>
-                      <span style={{ fontSize:9, color: isBreak ? '#D97706' : '#DC2626', fontWeight:600, textTransform:'uppercase' }}>{t('adminHol.jun')}</span>
+                      <span style={{ fontSize:9, color: isBreak ? '#D97706' : '#DC2626', fontWeight:600, textTransform:'uppercase' }}>{t('adminHol.sep')}</span>
                     </div>
                     <div style={{ flex:1 }}>
                       <p style={{ margin:0, fontWeight:600, fontSize:14, color:'#111827' }}>{name}</p>
