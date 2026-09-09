@@ -6,13 +6,13 @@ import { MENU_BY_DATE, isFridayDate, dateKey } from '../../../lib/menuData';
 import { CLASS_GROUPS, CLASS_DIVISIONS, requiresDivision, getAvailableDays, isDateAvailable, getHolidayInfo, getBlockedDaysList, TERM_BREAK_NOTICE } from '../../../lib/schoolCalendar';
 import { MEAL_SET_DAILY_PRICE } from '../../../lib/pricingData';
 import { CHEFS_PRICE, CHEFS_BRUNCH, fmt, mealPicked, isDatePicked, mealCost, priceForDate, dishNamesFor } from '../../../lib/pricing';
-import { saveParentOrder, getParentOrderForEdit, DEFAULT_MONTH } from '../../../lib/orderStore';
+import { saveParentOrder, getParentOrderForEdit, DEFAULT_MONTH, PARENT_CHILDREN } from '../../../lib/orderStore';
 import { isDateLocked, formatDeadline, CUTOFF_DAYS } from '../../../lib/cutoff';
 import { useT, fmtFullDate } from '../../../lib/i18n';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const KIDS = ['Ahmad Irfan', 'Nur Aisyah'];
+const KIDS = PARENT_CHILDREN;
 const ALL_CLASSES = Object.values(CLASS_GROUPS);
 
 // Derived per class group

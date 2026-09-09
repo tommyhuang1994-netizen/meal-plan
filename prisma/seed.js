@@ -12,7 +12,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { MENU_BY_DATE } from '../lib/menuData.js';
 import { CHEFS_PRICING, MENU_PRICING } from '../lib/pricingData.js';
 import { CALENDAR_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
-import { ORDERS } from '../lib/mockOrders.js';
+import { PARENT_CHILDREN } from '../lib/orderStore.js';
+import { STUDENTS } from '../lib/students.js';
 import { hashPassword } from '../lib/password.js';
 
 // Seeding writes schema-owned rows, so use the direct (unpooled) connection.
@@ -188,39 +189,21 @@ async function seedUsers() {
   return byRole;
 }
 
-/// Roster comes from the mock vendor orders — dedupe the same student appearing
-/// across several weekdays.
+/// The real roster from the September 2026 form responses.
 async function seedStudents(parent) {
-  const roster = new Map();
-  for (const day of Object.values(ORDERS)) {
-    for (const row of day) {
-      const existing = roster.get(row.name);
-      if (existing) {
-        for (const a of row.allergies) existing.allergies.add(a);
-        continue;
-      }
-      roster.set(row.name, {
-        name: row.name,
-        classGroup: GROUP[row.dept],
-        year: row.year,
-        allergies: new Set(row.allergies),
-      });
-    }
-  }
-
-  for (const s of roster.values()) {
+  for (const s of STUDENTS) {
     const data = {
-      classGroup: s.classGroup,
+      classGroup: GROUP[s.dept],
       year: s.year,
-      allergies: [...s.allergies],
-      // Only the two demo kids belong to the demo parent.
-      parentId: ['Ahmad Irfan', 'Nur Aisyah'].includes(s.name) ? parent.id : null,
+      allergies: s.allergies ?? [],
+      // Only the children the parent portal shows belong to the demo parent.
+      parentId: PARENT_CHILDREN.includes(s.name) ? parent.id : null,
     };
     const found = await prisma.student.findFirst({ where: { name: s.name } });
     if (found) await prisma.student.update({ where: { id: found.id }, data });
     else await prisma.student.create({ data: { name: s.name, ...data } });
   }
-  console.log(`  Student        ${roster.size}`);
+  console.log(`  Student        ${STUDENTS.length}`);
 }
 
 async function seedSettings() {
