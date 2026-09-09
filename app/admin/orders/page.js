@@ -9,6 +9,8 @@ import {
 } from '../../../lib/orderStore';
 import { useT, fmtDateInMonth } from '../../../lib/i18n';
 import { isDateLocked } from '../../../lib/cutoff';
+import { AllergyTags, UnattributedWarning } from '../../AllergyTags';
+import { UNATTRIBUTED_ALLERGIES, STUDENTS } from '../../../lib/students';
 
 const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
@@ -64,6 +66,9 @@ export default function AdminOrdersPage() {
       </header>
 
       <div style={S.container}>
+        {/* Standing notice — shown whether or not any order has been placed */}
+        <UnattributedWarning rows={UNATTRIBUTED_ALLERGIES} t={t} />
+
         {notice && (
           <div style={{ background:'#DCFCE7', border:'1px solid #86EFAC', color:'#166534', borderRadius:10, padding:'10px 14px', fontSize:13, fontWeight:600 }}>
             {notice}
@@ -103,6 +108,17 @@ export default function AdminOrdersPage() {
                         {o.planLabel && (
                           <p style={{ margin:'3px 0 0', fontSize:12, color:'#9CA3AF' }}>{o.planLabel}</p>
                         )}
+                        {(() => {
+                          // The order carries what the parent declared at order
+                          // time; fall back to the roster for orders placed
+                          // before the portal captured it.
+                          const roster = STUDENTS.find(x => x.name === o.studentName);
+                          const allergies = o.allergies?.length ? o.allergies : (roster?.allergies ?? []);
+                          const note = o.allergyNote || roster?.note || '';
+                          return (allergies.length || note)
+                            ? <div style={{ marginTop:5 }}><AllergyTags allergies={allergies} note={note} lang={lang} /></div>
+                            : null;
+                        })()}
                       </div>
                       <div style={{ textAlign:'right', flexShrink:0 }}>
                         <p style={{ margin:0, fontSize:17, fontWeight:800, color:'#1B5E20', fontVariantNumeric:'tabular-nums' }}>{fmtRM(o.total)}</p>

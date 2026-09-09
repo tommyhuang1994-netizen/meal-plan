@@ -8,6 +8,8 @@ import { useRouter } from 'next/navigation';
 import { MONTHS, DEFAULT_MONTH, monthLabel } from '../../../lib/orderStore';
 import { monthlyBill } from '../../../lib/billing';
 import { useT } from '../../../lib/i18n';
+import { AllergyTags, UnattributedWarning } from '../../AllergyTags';
+import { UNATTRIBUTED_ALLERGIES } from '../../../lib/students';
 
 const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
@@ -106,9 +108,18 @@ export default function AdminBillingPage() {
               })}
             </div>
 
+            <UnattributedWarning rows={UNATTRIBUTED_ALLERGIES} t={t} />
+
             {/* Per student — the actual invoice list */}
             <div style={S.card}>
-              <p style={S.cardTitle}>{t('billing.byStudent')}</p>
+              <p style={S.cardTitle}>
+                {t('billing.byStudent')}
+                {bill.withAllergies.length > 0 && (
+                  <span style={{ marginLeft:8, color:'#B91C1C', fontWeight:700 }}>
+                    · {t('allergy.declaredCount', { n: bill.withAllergies.length })}
+                  </span>
+                )}
+              </p>
               <div style={{ overflowX:'auto' }}>
                 <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
                   <thead>
@@ -125,6 +136,11 @@ export default function AdminBillingPage() {
                         <td style={S.td}>
                           {s.name}
                           {s.fromParent && <span style={S.viaParent}>{t('billing.viaPortal')}</span>}
+                          {(s.allergies?.length || s.note) && (
+                            <div style={{ marginTop:3 }}>
+                              <AllergyTags allergies={s.allergies} note={s.note} lang={lang} />
+                            </div>
+                          )}
                         </td>
                         <td style={{ ...S.td, color:'#6B7280' }}>{s.dept}{s.year ? ` ${s.year}` : ''}</td>
                         <td style={{ ...S.td, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{s.days}</td>

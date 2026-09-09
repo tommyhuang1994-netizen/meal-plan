@@ -9,6 +9,8 @@ import { MONTHS, DEFAULT_MONTH, monthLabel, servingDays, getOrdersForDate } from
 import { monthlyBill, chefSplit } from '../../../lib/billing';
 import { rowCharges } from '../../../lib/pricing';
 import { useT, fmtDateNumeric } from '../../../lib/i18n';
+import { AllergyTags, UnattributedWarning } from '../../AllergyTags';
+import { UNATTRIBUTED_ALLERGIES } from '../../../lib/students';
 
 const fmtRM = (n) => `RM ${Number(n || 0).toFixed(2)}`;
 
@@ -110,6 +112,31 @@ export default function VendorBillingPage() {
                   <span style={{ fontSize:13 }}>{t('billing.pickedDishes')}</span>
                   <span style={{ marginLeft:'auto', fontSize:14, fontWeight:700, fontVariantNumeric:'tabular-nums' }}>{split.chosen}</span>
                 </div>
+              </div>
+            )}
+
+            {/* Who the kitchen must cook around, for the whole month */}
+            <UnattributedWarning rows={UNATTRIBUTED_ALLERGIES} t={t} />
+
+            {bill.withAllergies.length > 0 && (
+              <div style={{ ...S.card, borderColor:'#FECACA' }}>
+                <p style={{ ...S.cardTitle, color:'#B91C1C' }}>
+                  {t('allergy.sectionTitle', { n: bill.withAllergies.length })}
+                </p>
+                <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+                  {bill.withAllergies.map(s2 => (
+                    <div key={s2.name} style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                      <span style={{ fontSize:13, fontWeight:700, color:'#111827', minWidth:170 }}>{s2.name}</span>
+                      <span style={{ fontSize:12, color:'#6B7280', minWidth:120 }}>
+                        {s2.dept}{s2.year ? ` ${s2.year}` : ''}
+                      </span>
+                      <AllergyTags allergies={s2.allergies} note={s2.note} lang={lang} />
+                    </div>
+                  ))}
+                </div>
+                <p style={{ margin:'9px 0 0', fontSize:11.5, color:'#9CA3AF', lineHeight:1.5 }}>
+                  {t('allergy.vendorNote')}
+                </p>
               </div>
             )}
 
