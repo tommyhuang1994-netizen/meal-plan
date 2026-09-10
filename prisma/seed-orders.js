@@ -109,7 +109,14 @@ async function main() {
       for (const r of rows) {
         const { parent } = rowCharges(r);
         const orderDay = await prisma.orderDay.create({
-          data: { orderId: order.id, date: utcDate(r.iso), price: parent },
+          data: {
+            orderId: order.id,
+            date: utcDate(r.iso),
+            price: parent,
+            // Per day, not per order: the same student can have a real sheet
+            // on one date and stand-in data on the next.
+            source: r.source === 'real' ? 'SERVICE_SHEET' : 'SAMPLE',
+          },
         });
         days++;
 

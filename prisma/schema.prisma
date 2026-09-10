@@ -382,6 +382,12 @@ model OrderDay {
   /// instead of vanishing from it — the kitchen is already committed to it.
   lockedAt DateTime?
 
+  /// Provenance is per DAY, not per order: one student's September can be a
+  /// real service sheet on the 14th and generated stand-in data on the 3rd.
+  /// Reading it off the parent Order marks every day of that order "actual",
+  /// which is exactly the sort of quiet overstatement an invoice must not make.
+  source OrderSource @default(SAMPLE)
+
   order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   meals        OrderMeal[]
   changes      OrderDayChange[]

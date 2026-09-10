@@ -27,7 +27,8 @@
     "next": "^16.2.7",
     "pg": "^8.22.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "embedded-postgres": "^18.4.0-beta.17",
