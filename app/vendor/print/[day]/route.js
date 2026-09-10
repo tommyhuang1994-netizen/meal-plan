@@ -204,13 +204,13 @@ export async function GET(request, { params }) {
       font-size: 7.5pt;
       font-weight: bold;
       padding: 3pt 4pt;
-      border: 0.5pt solid #000;
+      border: 0.75pt solid #000;
       background: #fff;
       text-align: left;
     }
 
     td {
-      border: 0.5pt solid #000;
+      border: 0.75pt solid #000;
       vertical-align: top;
       overflow: hidden;
     }
@@ -271,6 +271,18 @@ export async function GET(request, { params }) {
       table { page-break-inside: auto; }
       tr { page-break-inside: avoid; }
       tr.even td { background-color: #F7F9FA !important; }
+
+      /* Nothing on this sheet may depend on a background being printed.
+         Safari's "Print backgrounds" is off by default and some office
+         copiers drop tints anyway, so every glyph is stated as solid black
+         and the row tint is decoration only. */
+      th, td, .c-name, .c-class, .c-meal, .doc-title {
+        color: #000 !important;
+        opacity: 1 !important;
+      }
+      /* Hairlines thinner than ~0.75pt can fall below a copier's threshold
+         and vanish, taking the table grid with them. */
+      th, td { border-color: #000 !important; }
     }
   </style>
 </head>
