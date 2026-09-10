@@ -194,20 +194,15 @@ model AllergyDeclaration {
 // ── Catalogue ─────────────────────────────────────────────────────────────────
 
 model MenuItem {
-  id            String   @id @default(cuid())
-  name          String   @unique
-  description   String
-  /// The app is EN/中文 but dish names are still English everywhere, including
-  /// on the vendor sheet the kitchen reads. Optional so an untranslated dish
-  /// falls back to `name` rather than showing a blank.
-  nameZh        String?
-  descriptionZh String?
-  mealType      MealType
-  vendorCost    Decimal  @db.Decimal(10, 2)
-  parentPrice   Decimal  @db.Decimal(10, 2)
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  mealType    MealType
+  vendorCost  Decimal  @db.Decimal(10, 2)
+  parentPrice Decimal  @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   offerings  MenuOffering[]
   orderMeals OrderMeal[]
