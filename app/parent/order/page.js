@@ -186,9 +186,11 @@ export default function PlaceOrderPage() {
         ...initChild(),
         classGroup:     saved.classGroup,
         division:       saved.division,
-        mealSet:        saved.planCode === 'meal_set',
-        bfSet:          saved.planCode === 'bf',
-        lnSet:          saved.planCode === 'ln',
+        // Orders placed before the codes were aligned to PlanOption.code still
+        // carry the old short forms, so both are accepted on read.
+        mealSet:        saved.planCode === 'chefs_both' || saved.planCode === 'meal_set',
+        bfSet:          saved.planCode === 'chefs_bf'   || saved.planCode === 'bf',
+        lnSet:          saved.planCode === 'chefs_ln'   || saved.planCode === 'ln',
         illChoose:      saved.planCode === 'custom',
         dateSelections: saved.dateSelections,
         allergies:      Object.fromEntries((saved.allergies || []).map(a => [a, true])),
@@ -251,7 +253,11 @@ export default function PlaceOrderPage() {
         days: toVendorDays(d),
         total: allCalcs[kid].total,
         planLabel: planLabelFor(d),
-        planCode: d.mealSet ? 'meal_set' : d.bfSet ? 'bf' : d.lnSet ? 'ln' : 'custom',
+        // These must match PlanOption.code in lib/pricingData.js — an order
+        // stored with 'meal_set' would resolve to no plan at all once orders
+        // live in Postgres. 'custom' is the one value with no PlanOption
+        // behind it: "I'll choose" prices per dish, not per plan.
+        planCode: d.mealSet ? 'chefs_both' : d.bfSet ? 'chefs_bf' : d.lnSet ? 'chefs_ln' : 'custom',
       });
     }
     setSubmitted(true);

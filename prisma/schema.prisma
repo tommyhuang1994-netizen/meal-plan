@@ -91,6 +91,23 @@ enum InvoiceStatus {
   VOID
 }
 
+/// Where an order came from. The UI already distinguishes these — the vendor
+/// calendar badges a day "Actual orders" or "Sample data", the billing table
+/// marks rows "via portal" — so provenance has to survive into the database or
+/// those labels become lies.
+///
+/// PARENT_PORTAL — placed by a parent in /parent/order.
+/// SERVICE_SHEET — imported from the school's vendor name list; the record of
+///                 what was actually served.
+/// IMPORTED_FORM — read out of a Google Form response export.
+/// SAMPLE        — generated stand-in data. Must never reach an invoice.
+enum OrderSource {
+  PARENT_PORTAL
+  SERVICE_SHEET
+  IMPORTED_FORM
+  SAMPLE
+}
+
 // ── People ────────────────────────────────────────────────────────────────────
 
 model User {
@@ -103,10 +120,12 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  students   Student[]
-  orders     Order[]
-  sessions   Session[]
-  dayChanges OrderDayChange[]
+  students        Student[]
+  orders          Order[]              @relation("OrderParent")
+  cancelledOrders Order[]              @relation("OrderCancelledBy")
+  sessions        Session[]
+  dayChanges      OrderDayChange[]
+  sheetImports    ServiceSheetImport[]
 }
 
 /// Server-side sessions. The cookie holds this id, never the user id.
@@ -175,15 +194,20 @@ model AllergyDeclaration {
 // ── Catalogue ─────────────────────────────────────────────────────────────────
 
 model MenuItem {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String
-  mealType    MealType
-  vendorCost  Decimal  @db.Decimal(10, 2)
-  parentPrice Decimal  @db.Decimal(10, 2)
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String   @unique
+  description   String
+  /// The app is EN/中文 but dish names are still English everywhere, including
+  /// on the vendor sheet the kitchen reads. Optional so an untranslated dish
+  /// falls back to `name` rather than showing a blank.
+  nameZh        String?
+  descriptionZh String?
+  mealType      MealType
+  vendorCost    Decimal  @db.Decimal(10, 2)
+  parentPrice   Decimal  @db.Decimal(10, 2)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   offerings  MenuOffering[]
   orderMeals OrderMeal[]
@@ -252,6 +276,34 @@ model ClassGroupRule {
   updatedAt    DateTime   @updatedAt
 }
 
+/// One vendor name list loaded into the system.
+///
+/// The vendor calendar labels a day "Actual orders" or "Sample data", and that
+/// badge has to be answerable: this says which sheet a day's orders came from,
+/// when it was loaded and how many rows it carried. Without it, "actual" is
+/// just a colour.
+model ServiceSheetImport {
+  id             String   @id @default(cuid())
+  /// The serving date the sheet covers.
+  serviceDate    DateTime @db.Date
+  /// File the rows were read from, e.g. "Meal Plan Name List - 14SeptemberREV01.pdf".
+  sourceName     String
+  /// Revision printed on the sheet, where it has one ("REV01").
+  revision       String?
+  breakfastRows  Int      @default(0)
+  lunchRows      Int      @default(0)
+  brunchRows     Int      @default(0)
+  /// Names on the sheet that matched no student, for follow-up.
+  unmatchedNames String[] @default([])
+  importedAt     DateTime @default(now())
+  importedById   String?
+
+  importedBy User? @relation(fields: [importedById], references: [id], onDelete: SetNull)
+
+  @@unique([serviceDate, sourceName])
+  @@index([serviceDate])
+}
+
 // ── Ordering ──────────────────────────────────────────────────────────────────
 
 /// One orderable month. Replaces the hardcoded June 2026.
@@ -282,8 +334,11 @@ model Order {
   studentId  String
   parentId   String?
   classGroup ClassGroup
+  /// Null means "I'll choose" — the parent picked dishes per date rather than
+  /// taking a Chef's Choice plan.
   planId     String?
   status     OrderStatus @default(DRAFT)
+  source     OrderSource @default(PARENT_PORTAL)
 
   /// Snapshotted at submit. Never recomputed from current prices.
   subtotal Decimal @default(0) @db.Decimal(10, 2)
@@ -298,15 +353,24 @@ model Order {
   updatedAt   DateTime  @updatedAt
   submittedAt DateTime?
 
-  cycle   OrderCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  student Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  parent  User?       @relation(fields: [parentId], references: [id], onDelete: SetNull)
-  plan    PlanOption? @relation(fields: [planId], references: [id])
-  days    OrderDay[]
+  /// Admins cancel on a parent's request. Status alone cannot answer "who
+  /// cancelled my order, and when" — which is the question that actually gets
+  /// asked once money is involved.
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+
+  cycle       OrderCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent      User?       @relation("OrderParent", fields: [parentId], references: [id], onDelete: SetNull)
+  cancelledBy User?       @relation("OrderCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  plan        PlanOption? @relation(fields: [planId], references: [id])
+  days        OrderDay[]
 
   @@unique([cycleId, studentId])
   @@index([parentId])
   @@index([status])
+  @@index([source])
 }
 
 /// One ordered date. Pricing lives here because calcChild() prices per date:
