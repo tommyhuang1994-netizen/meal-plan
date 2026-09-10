@@ -110,6 +110,11 @@ export default function VendorDashboard() {
     window.open(`/vendor/print/${monthKey}?dept=${deptFilter}&date=${selectedDate}`, '_blank');
   }
 
+  function downloadPdf() {
+    if (!selectedDate) return;
+    window.location.href = `/vendor/pdf/${monthKey}?dept=${deptFilter}&date=${selectedDate}`;
+  }
+
   return (
     <main style={{ background: '#FAFAFA', minHeight: '100dvh' }}>
 
@@ -262,13 +267,24 @@ export default function VendorDashboard() {
                   </button>
                 ))}
               </div>
-              <button onClick={openPrint}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#1B5E20', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z"/>
-                </svg>
-                {t('vendor.print', { day: weekdayFullInMonth(lang, monthKey, selectedDate) })}
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {/* Downloads a real PDF rather than opening the browser's print
+                    dialog, which is where the blank pages were coming from. */}
+                <button onClick={downloadPdf}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#1B5E20', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+                  </svg>
+                  {t('vendor.downloadPdf')}
+                </button>
+                <button onClick={openPrint}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff', color: '#1B5E20', border: '1.5px solid #1B5E20', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z"/>
+                  </svg>
+                  {t('vendor.print', { day: weekdayFullInMonth(lang, monthKey, selectedDate) })}
+                </button>
+              </div>
             </div>
 
             {/* Cutoff notice */}
