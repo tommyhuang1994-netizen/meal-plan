@@ -9,3 +9,6 @@ node_modules/
 .localdb/
 
 .DS_Store
+
+# scratch file used by scripts/set-db-password.mjs
+.db-password.txt
