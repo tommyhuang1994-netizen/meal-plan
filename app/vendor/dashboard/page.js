@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { DEPARTMENTS, ALLERGY_LABELS } from '../../../lib/mockOrders';
 import {
   MONTHS, DEFAULT_MONTH, monthLabel, servingDays, closedReason,
-  getOrdersForDate, getOrderCounts,
+  getOrdersForDate, getOrderCounts, isRealDate,
 } from '../../../lib/orderStore';
 import { useT, fmtDateInMonth, weekdayFullInMonth } from '../../../lib/i18n';
 
@@ -128,7 +128,20 @@ export default function VendorDashboard() {
               })}
             </div>
             {selectedDate && (
-              <span style={{ fontSize: 13, color: '#6B7280' }}>{fmtDateInMonth(lang, monthKey, selectedDate)}</span>
+              <span style={{ fontSize: 13, color: '#6B7280', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                {fmtDateInMonth(lang, monthKey, selectedDate)}
+                {/* Which days come from the school's own name list, and which
+                    are still stand-in data. Worth saying plainly: the two look
+                    identical in the table but only one can be invoiced. */}
+                <span style={{
+                  fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                  padding: '2px 7px', borderRadius: 20,
+                  background: isRealDate(monthKey, selectedDate) ? '#DCFCE7' : '#FEF3C7',
+                  color: isRealDate(monthKey, selectedDate) ? '#15803D' : '#92400E',
+                }}>
+                  {t(isRealDate(monthKey, selectedDate) ? 'vendor.realData' : 'vendor.sampleData')}
+                </span>
+              </span>
             )}
           </div>
 
