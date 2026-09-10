@@ -6,8 +6,8 @@ import Image from 'next/image';
 import { DEPARTMENTS, ALLERGY_LABELS } from '../../../lib/mockOrders';
 import {
   MONTHS, DEFAULT_MONTH, monthLabel, servingDays, closedReason,
-  getOrdersForDate, getOrderCounts, isRealDate,
 } from '../../../lib/orderStore';
+import { fetchOrdersForDate, fetchOrderCounts } from '../../../lib/orderStore.db';
 import { useT, fmtDateInMonth, weekdayFullInMonth } from '../../../lib/i18n';
 
 // ── Calendar helpers (work for any month the store exposes) ──────────────────
@@ -61,14 +61,31 @@ export default function VendorDashboard() {
   const [monthKey,     setMonthKey]    = useState(DEFAULT_MONTH);
   const [selectedDate, setSelectedDate] = useState(null); // day number
   const [deptFilter,   setDeptFilter]   = useState('All');
-  // Orders live in localStorage, which the server cannot read. Load them after
-  // mount so the first client render matches the server's and hydration holds.
+  // Orders come from Postgres over /api/orders, so they arrive after mount.
+  // Both effects guard against a stale response overwriting a newer one: the
+  // vendor can change month or day faster than a query returns, and without
+  // the check the wrong day's orders can land in the table.
   const [orders, setOrders] = useState([]);
   const [counts, setCounts] = useState({});
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => { setCounts(getOrderCounts(monthKey)); }, [monthKey]);
   useEffect(() => {
-    setOrders(selectedDate ? getOrdersForDate(monthKey, selectedDate) : []);
+    let live = true;
+    fetchOrderCounts(monthKey)
+      .then(c => { if (live) setCounts(c); })
+      .catch(err => { console.error(err); if (live) setCounts({}); });
+    return () => { live = false; };
+  }, [monthKey]);
+
+  useEffect(() => {
+    if (!selectedDate) { setOrders([]); return; }
+    let live = true;
+    setLoading(true);
+    fetchOrdersForDate(monthKey, selectedDate)
+      .then(rows => { if (live) setOrders(rows); })
+      .catch(err => { console.error(err); if (live) setOrders([]); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
   }, [monthKey, selectedDate]);
 
   const calendarDays = getDaysInMonth(monthKey);
@@ -79,6 +96,9 @@ export default function VendorDashboard() {
   const lnOrders = filtered.filter(o => o.lunch);
   const brOrders = filtered.filter(o => o.brunch);
   const parentCount = filtered.filter(o => o.source === 'parent').length;
+  // Read the badge off the rows themselves rather than a date list in code, so
+  // it reflects what is actually in the database for this day.
+  const dayIsReal = orders.length > 0 && orders.some(o => o.source !== 'sample');
 
   function pickMonth(key) {
     setMonthKey(key);
@@ -136,10 +156,10 @@ export default function VendorDashboard() {
                 <span style={{
                   fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
                   padding: '2px 7px', borderRadius: 20,
-                  background: isRealDate(monthKey, selectedDate) ? '#DCFCE7' : '#FEF3C7',
-                  color: isRealDate(monthKey, selectedDate) ? '#15803D' : '#92400E',
+                  background: dayIsReal ? '#DCFCE7' : '#FEF3C7',
+                  color: dayIsReal ? '#15803D' : '#92400E',
                 }}>
-                  {t(isRealDate(monthKey, selectedDate) ? 'vendor.realData' : 'vendor.sampleData')}
+                  {t(dayIsReal ? 'vendor.realData' : 'vendor.sampleData')}
                 </span>
               </span>
             )}
