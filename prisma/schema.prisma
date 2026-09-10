@@ -67,6 +67,30 @@ enum OrderStatus {
   PAID
 }
 
+/// Who made a change to an order day. Kept separate from Role because a
+/// change can also be made by the system (a cut-off passing, an import).
+enum ChangeActor {
+  PARENT
+  ADMIN
+  VENDOR
+  SYSTEM
+}
+
+/// PARENT — what the school charges a family.
+/// SCHOOL — what the vendor charges the school.
+/// Both are drawn from the same OrderDay rows, seen from opposite sides.
+enum InvoiceParty {
+  PARENT
+  SCHOOL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+}
+
 // ── People ────────────────────────────────────────────────────────────────────
 
 model User {
@@ -79,9 +103,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  students Student[]
-  orders   Order[]
-  sessions Session[]
+  students   Student[]
+  orders     Order[]
+  sessions   Session[]
+  dayChanges OrderDayChange[]
 }
 
 /// Server-side sessions. The cookie holds this id, never the user id.
@@ -98,21 +123,52 @@ model Session {
 }
 
 model Student {
-  id         String     @id @default(cuid())
-  name       String
-  classGroup ClassGroup
-  year       String?
+  id          String     @id @default(cuid())
+  name        String
+  classGroup  ClassGroup
+  year        String?
   /// Standing allergy flags, e.g. ["peanuts", "noSpicy"]. Keys match ALLERGY_LABELS.
-  allergies  String[]   @default([])
-  parentId   String?
-  active     Boolean    @default(true)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  allergies   String[]   @default([])
+  /// The parent's exact wording. The chips above are a best-effort match, and
+  /// "Broad Bean (G6PD)", "Aloe vera" and "no beef" match no chip at all — so
+  /// dropping this text would drop the warning.
+  allergyNote String?
+  parentId    String?
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
-  parent User?   @relation(fields: [parentId], references: [id], onDelete: SetNull)
-  orders Order[]
+  parent       User?                @relation(fields: [parentId], references: [id], onDelete: SetNull)
+  orders       Order[]
+  invoices     Invoice[]
+  declarations AllergyDeclaration[]
 
   @@index([parentId])
+  @@index([classGroup])
+}
+
+/// An allergy declared on a form response that could not be matched to a
+/// student — the response carries a class and a timestamp but no readable
+/// name. Three exist for September 2026, including a peanut allergy.
+///
+/// These are deliberately NOT folded into Student: an unmatched warning must
+/// stay visible as unmatched, so the kitchen knows it applies to someone in
+/// that class it cannot yet identify.
+model AllergyDeclaration {
+  id                String     @id @default(cuid())
+  /// Form submission time — the only handle on which response this was.
+  submittedAt       DateTime
+  classGroup        ClassGroup
+  year              String?
+  allergies         String[]   @default([])
+  note              String
+  resolvedStudentId String?
+  resolvedAt        DateTime?
+  createdAt         DateTime   @default(now())
+
+  resolvedStudent Student? @relation(fields: [resolvedStudentId], references: [id], onDelete: SetNull)
+
+  @@index([resolvedStudentId])
   @@index([classGroup])
 }
 
@@ -183,6 +239,19 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/// Which meals a class group may order at all.
+///
+/// This is where the order form's "Zera PLUS students are eligible for
+/// Breakfast only" rule lives. It exists nowhere in the codebase today, so it
+/// cannot be rediscovered by reading it — as data it can at least be seen and
+/// enforced.
+model ClassGroupRule {
+  classGroup   ClassGroup @id
+  allowedMeals MealType[]
+  note         String?
+  updatedAt    DateTime   @updatedAt
+}
+
 // ── Ordering ──────────────────────────────────────────────────────────────────
 
 /// One orderable month. Replaces the hardcoded June 2026.
@@ -194,7 +263,15 @@ model OrderCycle {
   opensAt  DateTime?
   closesAt DateTime?
 
-  orders Order[]
+  /// How late a placed order may still be changed, as CLEAR days before the
+  /// meal: 2 means a meal on the 13th stops being editable at 22:00 on the
+  /// 10th. Held here rather than in lib/cutoff.js so the school can move the
+  /// deadline without a deploy.
+  changeCutoffDays Int @default(2)
+  changeCutoffHour Int @default(22)
+
+  orders   Order[]
+  invoices Invoice[]
 
   @@unique([year, month])
 }
@@ -242,11 +319,41 @@ model OrderDay {
   price    Decimal  @db.Decimal(10, 2)
   discount Decimal  @default(0) @db.Decimal(10, 2)
 
-  order Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  meals OrderMeal[]
+  /// When this day passed its cut-off. A locked day survives a re-order
+  /// instead of vanishing from it — the kitchen is already committed to it.
+  lockedAt DateTime?
+
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  meals        OrderMeal[]
+  changes      OrderDayChange[]
+  invoiceLines InvoiceLine[]
 
   @@unique([orderId, date])
   @@index([date])
+}
+
+/// Who changed one day of an order, and to what.
+///
+/// Parents change single days and admins cancel whole months. When a family
+/// disputes a bill this is the only record that can answer what was ordered
+/// and when it changed — the OrderDay itself only ever shows its final state.
+model OrderDayChange {
+  id          String      @id @default(cuid())
+  orderDayId  String
+  changedById String?
+  actorRole   ChangeActor
+  changedAt   DateTime    @default(now())
+  /// Meal slots as they stood before and after, so a day can be reconstructed
+  /// without replaying every row.
+  before      Json?
+  after       Json?
+  reason      String?
+
+  orderDay  OrderDay @relation(fields: [orderDayId], references: [id], onDelete: Cascade)
+  changedBy User?    @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([orderDayId])
+  @@index([changedAt])
 }
 
 /// What the student actually eats. The vendor dashboard reads this joined on date.
@@ -266,4 +373,57 @@ model OrderMeal {
   menuItem MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
 
   @@unique([orderDayId, mealType])
+}
+
+// ── Billing ───────────────────────────────────────────────────────────────────
+// The bill is currently recomputed from live orders on every page load. That is
+// fine to look at and wrong to send: once an invoice dated 01/09/2026 has gone
+// out, a parent editing one meal must not silently change what the school
+// already charged. Issuing an invoice freezes its lines here.
+
+model Invoice {
+  id        String        @id @default(cuid())
+  cycleId   String
+  party     InvoiceParty
+  /// The family being charged. Null on the SCHOOL invoice, which covers the
+  /// whole cycle in one document.
+  studentId String?
+  number    String        @unique
+  issuedAt  DateTime?
+  dueAt     DateTime?
+  total     Decimal       @default(0) @db.Decimal(10, 2)
+  status    InvoiceStatus @default(DRAFT)
+  note      String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  cycle   OrderCycle    @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  student Student?      @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  lines   InvoiceLine[]
+
+  /// One invoice per party per student per cycle. Postgres treats NULLs as
+  /// distinct, so this does not by itself stop a second SCHOOL invoice for a
+  /// cycle — issuing code must check for one.
+  @@unique([cycleId, party, studentId])
+  @@index([status])
+}
+
+/// A frozen copy of one charge. Written when the invoice is issued and never
+/// recomputed — that is the entire point of the table.
+model InvoiceLine {
+  id          String    @id @default(cuid())
+  invoiceId   String
+  /// Kept for traceability. SetNull rather than Cascade: deleting an order
+  /// must never quietly delete a line off an invoice already sent.
+  orderDayId  String?
+  date        DateTime? @db.Date
+  description String
+  quantity    Int       @default(1)
+  amount      Decimal   @db.Decimal(10, 2)
+
+  invoice  Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  orderDay OrderDay? @relation(fields: [orderDayId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([orderDayId])
 }

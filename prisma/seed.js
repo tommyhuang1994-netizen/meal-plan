@@ -13,7 +13,7 @@ import { MENU_BY_DATE } from '../lib/menuData.js';
 import { CHEFS_PRICING, MENU_PRICING } from '../lib/pricingData.js';
 import { CALENDAR_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
 import { PARENT_CHILDREN } from '../lib/orderStore.js';
-import { STUDENTS } from '../lib/students.js';
+import { STUDENTS, UNATTRIBUTED_ALLERGIES } from '../lib/students.js';
 import { hashPassword } from '../lib/password.js';
 
 // Seeding writes schema-owned rows, so use the direct (unpooled) connection.
@@ -196,6 +196,9 @@ async function seedStudents(parent) {
       classGroup: GROUP[s.dept],
       year: s.year,
       allergies: s.allergies ?? [],
+      // The parent's own wording, which the chips cannot carry: "Broad Bean
+      // (G6PD)", "Aloe vera" and "no beef" match no chip at all.
+      allergyNote: s.note || null,
       // Only the children the parent portal shows belong to the demo parent.
       parentId: PARENT_CHILDREN.includes(s.name) ? parent.id : null,
     };
@@ -204,6 +207,57 @@ async function seedStudents(parent) {
     else await prisma.student.create({ data: { name: s.name, ...data } });
   }
   console.log(`  Student        ${STUDENTS.length}`);
+}
+
+/// Allergy declarations with no name attached. Three responses carry a class
+/// and a timestamp but no readable name, one of them a peanut allergy — they
+/// are seeded as unresolved so the warning stays visible until an admin can
+/// match it to a child.
+async function seedAllergyDeclarations() {
+  for (const d of UNATTRIBUTED_ALLERGIES) {
+    // "21/08/2026 11:38:57" — day/month/year, local time.
+    const [date, time] = d.submitted.split(' ');
+    const [dd, mm, yyyy] = date.split('/').map(Number);
+    const [hh, mi, ss] = time.split(':').map(Number);
+    const submittedAt = new Date(yyyy, mm - 1, dd, hh, mi, ss);
+
+    const found = await prisma.allergyDeclaration.findFirst({ where: { submittedAt } });
+    const data = {
+      submittedAt,
+      classGroup: GROUP[d.dept],
+      year: d.year,
+      allergies: d.allergies ?? [],
+      note: d.note,
+    };
+    if (found) await prisma.allergyDeclaration.update({ where: { id: found.id }, data });
+    else await prisma.allergyDeclaration.create({ data });
+  }
+  console.log(`  AllergyDecl    ${UNATTRIBUTED_ALLERGIES.length}`);
+}
+
+/// Which meals each group may order. The order form states "Zera PLUS students
+/// are eligible for Breakfast only"; nothing in the app enforced it, so it is
+/// recorded here first and can be enforced against real data.
+async function seedClassGroupRules() {
+  const ALL = ['BREAKFAST', 'LUNCH', 'BRUNCH'];
+  const rules = [
+    { classGroup: 'CAMBRIDGE', allowedMeals: ALL, note: null },
+    { classGroup: 'HOMESCHOOL', allowedMeals: ALL, note: null },
+    { classGroup: 'STAFF', allowedMeals: ALL, note: null },
+    {
+      classGroup: 'PLUS',
+      allowedMeals: ['BREAKFAST'],
+      note: 'Order form: "Zera PLUS students are eligible for Breakfast only."',
+    },
+  ];
+  for (const r of rules) {
+    await prisma.classGroupRule.upsert({
+      where: { classGroup: r.classGroup },
+      update: { allowedMeals: r.allowedMeals, note: r.note },
+      create: r,
+    });
+  }
+  console.log(`  ClassGroupRule ${rules.length}`);
 }
 
 async function seedSettings() {
@@ -230,6 +284,8 @@ async function main() {
   await seedCycle();
   const users = await seedUsers();
   await seedStudents(users.PARENT);
+  await seedAllergyDeclarations();
+  await seedClassGroupRules();
   await seedSettings();
   console.log('Done.');
 }
