@@ -121,18 +121,24 @@ export async function GET(request, { params }) {
   // workbook has. Friday has only one meal, and the workbook heads BOTH halves
   // "Brunch" and runs the one list down the left then the right — it does not
   // widen the columns, which is what stretching a single group would do.
+  // `count` is what the kitchen actually cooks for that meal, so it belongs in
+  // the column header. On Friday the one brunch list is split across the two
+  // halves, so the count is the whole list on the left and the right is marked
+  // as its continuation — printing 49 over both halves would read as 98.
   let groups;
   if (isFriday) {
     const list = bySlot('brunch');
     const half = Math.ceil(list.length / 2);
     groups = [
-      { slot: 'brunch', label: 'Brunch', list: list.slice(0, half) },
-      { slot: 'brunch', label: 'Brunch', list: list.slice(half) },
+      { slot: 'brunch', label: 'Brunch', list: list.slice(0, half), count: list.length },
+      { slot: 'brunch', label: 'Brunch (continued)', list: list.slice(half), count: null },
     ];
   } else {
+    const bf = bySlot('breakfast');
+    const ln = bySlot('lunch');
     groups = [
-      { slot: 'breakfast', label: 'Breakfast', list: bySlot('breakfast') },
-      { slot: 'lunch', label: 'Lunch', list: bySlot('lunch') },
+      { slot: 'breakfast', label: 'Breakfast', list: bf, count: bf.length },
+      { slot: 'lunch', label: 'Lunch', list: ln, count: ln.length },
     ];
   }
 
@@ -187,6 +193,12 @@ export async function GET(request, { params }) {
     page.drawText(ascii(title), {
       x: leftEdge, y: y - titleH + 4, size: 12, font: bold,
     });
+    // Total people served, alongside the per-meal counts in the headers below.
+    const totalLabel = `${rows.length} orders${dept !== 'All' ? ` - ${dept}` : ''}`;
+    page.drawText(totalLabel, {
+      x: leftEdge + groupW * 2 + gap - font.widthOfTextAtSize(totalLabel, 8.5),
+      y: y - titleH + 4.5, size: 8.5, font, color: rgb(0.35, 0.35, 0.35),
+    });
     y -= titleH;
 
     groups.forEach((g, gi) => {
@@ -196,6 +208,15 @@ export async function GET(request, { params }) {
         box(x, y, cw[hi], headerH);
         page.drawText(h, { x: x + PAD, y: y - headerH + 3, size: SIZE, font: bold });
       });
+      // The portion count for this meal, right-aligned in its own header cell.
+      if (g.count != null) {
+        const label = `${g.count} orders`;
+        const mealX = x0 + cw[0] + cw[1];
+        page.drawText(label, {
+          x: mealX + cw[2] - PAD - bold.widthOfTextAtSize(label, SIZE),
+          y: y - headerH + 3, size: SIZE, font: bold, color: rgb(0.1, 0.36, 0.13),
+        });
+      }
     });
     y -= headerH;
   };
