@@ -1,15 +1,26 @@
-// The kitchen sheet as a real PDF file, not a web page to be printed.
+// The kitchen sheet as a real PDF, laid out to match "Meal Plan Name List.xlsx".
 //
 //   /vendor/pdf/2026-09?date=14&dept=All
 //
 // Printing the HTML sheet goes through Safari and the copier driver, which is
-// where it was coming out blank. A generated PDF removes both from the path:
-// the file either has the orders in it or it does not, and that can be checked.
+// where the blank pages were coming from. A generated PDF removes both from the
+// path: the file either contains the orders or it does not.
 //
-// Text is Latin-only. pdf-lib's standard fonts are WinAnsi, so a stray CJK
-// character would throw mid-render; the bilingual labels on the HTML sheet are
-// therefore rendered in English here, and every string is sanitised before it
-// is drawn.
+// GEOMETRY — every number below is read out of the workbook, not chosen. The
+// sheet is printed onto A4 sticker stock and cut along the cell borders, so the
+// boxes have to land where the school's own sheet puts them.
+//
+//   paperSize 9 (A4), portrait, pageSetUpPr fitToPage="1" fitToHeight="0"
+//     -> scaled to fit ONE page wide, any number of pages tall
+//   pageMargins 0.19685in left, 0.197in elsewhere -> 14.17pt (5mm)
+//   printOptions horizontalCentered="1"
+//   columns A..G  22 / 15.75 / 35.13 / 2.0 / 22 / 15.75 / 35.13 char units
+//   rows          title 24pt, header 15.75pt, data 37.5pt
+//   borders       thin on all four sides of every cell
+//
+// Excel char width -> px is round(w * 7 + 5) at the default font, and px -> pt
+// is x0.75. That totals 801.75pt against 566.92pt of usable A4 width, so
+// Excel's fit-to-width scale is 0.7071 and a data row prints at 26.52pt (9.4mm).
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { ordersForDate } from '../../../../lib/orders-db';
 import { MONTHS } from '../../../../lib/orderStore';
@@ -20,14 +31,22 @@ export const dynamic = 'force-dynamic';
 
 const CHEF = "Chef's Choice";
 const A4 = [595.28, 841.89];
-const MARGIN = 28;
 
-/// WinAnsi only. Anything outside it is dropped rather than allowed to throw
-/// halfway through a page — a missing glyph is survivable, a 500 is not.
+// ── Workbook geometry ───────────────────────────────────────────────────────
+const MARGIN = 0.19685039370078738 * 72;          // 14.17pt, as in the workbook
+const chToPt = (w) => Math.round(w * 7 + 5) * 0.75;
+
+const EXCEL_COLS = [22.0, 15.75, 35.13];          // name, class, meal
+const EXCEL_GAP = 2.0;                            // the spacer column D
+const EXCEL_TITLE_H = 24.0;
+const EXCEL_HEADER_H = 15.75;
+const EXCEL_ROW_H = 37.5;
+
+/// WinAnsi only: pdf-lib's standard fonts cannot draw CJK and would throw
+/// mid-page. A dropped glyph is survivable, a 500 on the kitchen's sheet is
+/// not — so the workbook's bilingual labels render in English here.
 const ascii = (s) => String(s ?? '').replace(/[^\x20-\x7E]/g, '').trim();
 
-/// Greedy wrap to a pixel width, so a long dish name takes two lines in its
-/// cell instead of running under the next column.
 function wrap(text, font, size, width) {
   const words = ascii(text).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -57,17 +76,18 @@ function mealLabel(o, slot) {
 
 /// "Cambridge Year 6", "Plus", "Cambridge Plus" — never "Cambridge Cambridge
 /// Plus", which is what appending the division blindly produces for the one
-/// division whose name already carries its group.
+/// division whose name already carries its group. The workbook writes these
+/// uppercased, so match it.
 function classLabel(o) {
-  if (!o.year) return o.dept;
-  return o.year.startsWith(o.dept) ? o.year : `${o.dept} ${o.year}`;
+  const label = !o.year ? o.dept : (o.year.startsWith(o.dept) ? o.year : `${o.dept} ${o.year}`);
+  return label.toUpperCase();
 }
 
 function allergyText(o) {
   const chips = (o.allergies ?? []).map(a => ALLERGY_LABELS[a]?.en).filter(Boolean);
   const note = ascii(o.note);
   if (!chips.length && !note) return '';
-  return note && !chips.length ? `! ${note}` : `! ${[...chips, note].filter(Boolean).join(', ')}`;
+  return `! ${[...new Set([...chips, note])].filter(Boolean).join(', ')}`;
 }
 
 export async function GET(request, { params }) {
@@ -89,122 +109,156 @@ export async function GET(request, { params }) {
   const WD = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const MONTH_EN = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'];
-  const sfx = ['th', 'st', 'nd', 'rd'][(date % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][date % 100] || 'th';
-  const title = `${WD[dateObj.getDay()]} - ${date}${sfx} ${MONTH_EN[meta.month]} ${meta.year}`;
+  // The workbook titles its sheets "Monday - 14 September 2026".
+  const title = `${WD[dateObj.getDay()]} - ${date} ${MONTH_EN[meta.month]} ${meta.year}`;
 
-  // Sort so identical meals sit together — the kitchen counts them in blocks.
   const bySlot = (slot) => rows
     .filter(o => o[slot])
     .sort((a, b) => mealLabel(a, slot).localeCompare(mealLabel(b, slot))
       || a.name.localeCompare(b.name));
 
-  const columns = isFriday
-    ? [{ slot: 'brunch', label: 'Brunch', list: bySlot('brunch') }]
-    : [
-        { slot: 'breakfast', label: 'Breakfast', list: bySlot('breakfast') },
-        { slot: 'lunch', label: 'Lunch', list: bySlot('lunch') },
-      ];
+  // Always two column groups of identical width, as every sheet in the
+  // workbook has. Friday has only one meal, and the workbook heads BOTH halves
+  // "Brunch" and runs the one list down the left then the right — it does not
+  // widen the columns, which is what stretching a single group would do.
+  let groups;
+  if (isFriday) {
+    const list = bySlot('brunch');
+    const half = Math.ceil(list.length / 2);
+    groups = [
+      { slot: 'brunch', label: 'Brunch', list: list.slice(0, half) },
+      { slot: 'brunch', label: 'Brunch', list: list.slice(half) },
+    ];
+  } else {
+    groups = [
+      { slot: 'breakfast', label: 'Breakfast', list: bySlot('breakfast') },
+      { slot: 'lunch', label: 'Lunch', list: bySlot('lunch') },
+    ];
+  }
+
+  // ── Fit to width exactly as Excel does ────────────────────────────────────
+  const [PW, PH] = A4;
+  const usableW = PW - MARGIN * 2;
+  const groupPt = EXCEL_COLS.reduce((s, w) => s + chToPt(w), 0);
+  const gapPt = chToPt(EXCEL_GAP);
+  const contentPt = groupPt * 2 + gapPt;
+  const scale = usableW / contentPt;
+
+  const cw = EXCEL_COLS.map(w => chToPt(w) * scale);
+  const gap = gapPt * scale;
+  const groupW = cw.reduce((s, w) => s + w, 0);
+  const titleH = EXCEL_TITLE_H * scale;
+  const headerH = EXCEL_HEADER_H * scale;
+  const rowH = EXCEL_ROW_H * scale;
+
+  // Centred, matching printOptions horizontalCentered="1". With two equal
+  // groups this comes out flush to the margins.
+  const leftEdge = MARGIN + (usableW - (groupW * 2 + gap)) / 2;
 
   const pdf = await PDFDocument.create();
   pdf.setTitle(title);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
-  const [PW, PH] = A4;
-  const usable = PW - MARGIN * 2;
-  const gap = 14;
-  const colW = columns.length === 1 ? usable : (usable - gap) / 2;
-  // Name / class / meal within a column.
-  const cw = [colW * 0.30, colW * 0.22, colW * 0.48];
-
-  const SIZE = 7.5;
-  const NAME_SIZE = 8.5;
-  const LEAD = 9.5;
+  const NAME_SIZE = 8;
+  const SIZE = 6.8;
+  const LEAD = 8.2;
+  const PAD = 2.5;
+  const RULE = rgb(0, 0, 0);
+  const HAIR = 0.5;
 
   let page = null;
   let y = 0;
 
-  const newPage = () => {
-    page = pdf.addPage(A4);
-    y = PH - MARGIN;
-    page.drawText(ascii(title), { x: MARGIN, y: y - 12, size: 13, font: bold });
-    page.drawText(`${rows.length} orders${dept !== 'All' ? ' - ' + dept : ''}`,
-      { x: MARGIN, y: y - 26, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
-    y -= 42;
-    // Column headers
-    columns.forEach((c, ci) => {
-      const x0 = MARGIN + ci * (colW + gap);
-      page.drawRectangle({ x: x0, y: y - 12, width: colW, height: 14, color: rgb(0.92, 0.94, 0.92) });
-      ['NAME', 'CLASS', c.label.toUpperCase()].forEach((h, hi) => {
-        const hx = x0 + cw.slice(0, hi).reduce((s, w) => s + w, 0) + 3;
-        page.drawText(h, { x: hx, y: y - 9, size: 6.5, font: bold, color: rgb(0.25, 0.25, 0.25) });
-      });
+  const groupX = (gi) => leftEdge + gi * (groupW + gap);
+
+  /// Thin box on all four sides, as in the workbook — these are the cut lines.
+  const box = (x, top, w, h) => {
+    page.drawRectangle({
+      x, y: top - h, width: w, height: h,
+      borderWidth: HAIR, borderColor: RULE,
     });
-    y -= 16;
   };
 
-  newPage();
+  const startPage = () => {
+    page = pdf.addPage(A4);
+    y = PH - MARGIN;
 
-  // Walk both columns in step so each printed row lines up across the page.
-  const maxRows = Math.max(...columns.map(c => c.list.length));
+    page.drawText(ascii(title), {
+      x: leftEdge, y: y - titleH + 4, size: 12, font: bold,
+    });
+    y -= titleH;
+
+    groups.forEach((g, gi) => {
+      const x0 = groupX(gi);
+      ['Name', 'Class', g.label].forEach((h, hi) => {
+        const x = x0 + cw.slice(0, hi).reduce((s, w) => s + w, 0);
+        box(x, y, cw[hi], headerH);
+        page.drawText(h, { x: x + PAD, y: y - headerH + 3, size: SIZE, font: bold });
+      });
+    });
+    y -= headerH;
+  };
+
+  startPage();
+
+  const maxRows = Math.max(...groups.map(g => g.list.length));
   for (let i = 0; i < maxRows; i++) {
-    // How tall is this row? The tallest cell across the columns decides.
-    let rowH = LEAD;
-    const cells = columns.map(c => {
-      const o = c.list[i];
+    // Lay the text out first: the workbook's 37.5pt is the row height, but a
+    // long dish plus an allergy note can need more, and clipping a warning off
+    // the kitchen's sticker is not an acceptable way to keep the grid tidy.
+    const cells = groups.map(g => {
+      const o = g.list[i];
       if (!o) return null;
-      const nameLines = wrap(o.name, bold, NAME_SIZE, cw[0] - 6);
-      const classLines = wrap(classLabel(o), font, SIZE, cw[1] - 6);
-      const mealLines = wrap(mealLabel(o, c.slot), font, SIZE, cw[2] - 6);
-      const al = allergyText(o);
-      const alLines = al ? wrap(al, bold, SIZE - 0.5, cw[0] - 6) : [];
-      const h = Math.max(
-        (nameLines.length + alLines.length) * LEAD,
-        classLines.length * LEAD,
-        mealLines.length * LEAD,
-      ) + 4;
-      rowH = Math.max(rowH, h);
-      return { o, nameLines, classLines, mealLines, alLines };
+      const nameLines = wrap(o.name, bold, NAME_SIZE, cw[0] - PAD * 2);
+      const alText = allergyText(o);
+      const alLines = alText ? wrap(alText, bold, SIZE - 0.3, cw[0] - PAD * 2) : [];
+      const classLines = wrap(classLabel(o), font, SIZE, cw[1] - PAD * 2);
+      const mealLines = wrap(mealLabel(o, g.slot), font, SIZE, cw[2] - PAD * 2);
+      return { o, nameLines, alLines, classLines, mealLines };
     });
 
-    if (y - rowH < MARGIN) newPage();
+    const needed = Math.max(...cells.map(c => c
+      ? Math.max((c.nameLines.length + c.alLines.length), c.classLines.length, c.mealLines.length) * LEAD + PAD * 2
+      : 0), 0);
+    const h = Math.max(rowH, needed);
 
-    columns.forEach((c, ci) => {
-      const cell = cells[ci];
-      const x0 = MARGIN + ci * (colW + gap);
-      // Row rule across the whole column, so empty cells still read as a row.
-      page.drawLine({
-        start: { x: x0, y: y - rowH + 2 },
-        end: { x: x0 + colW, y: y - rowH + 2 },
-        thickness: 0.4,
-        color: rgb(0.8, 0.8, 0.8),
-      });
+    if (y - h < MARGIN) startPage();
+
+    groups.forEach((g, gi) => {
+      const x0 = groupX(gi);
+      const cell = cells[gi];
+      // Boxes are drawn for every row, filled or not, so the grid stays whole
+      // when one column runs out before the other.
+      for (let ci = 0; ci < 3; ci++) {
+        box(x0 + cw.slice(0, ci).reduce((s, w) => s + w, 0), y, cw[ci], h);
+      }
       if (!cell) return;
 
-      let ty = y - 8;
+      let ty = y - PAD - NAME_SIZE;
       for (const line of cell.nameLines) {
-        page.drawText(line, { x: x0 + 3, y: ty, size: NAME_SIZE, font: bold });
+        page.drawText(line, { x: x0 + PAD, y: ty, size: NAME_SIZE, font: bold });
         ty -= LEAD;
       }
       for (const line of cell.alLines) {
-        page.drawText(line, { x: x0 + 3, y: ty, size: SIZE - 0.5, font: bold, color: rgb(0.7, 0.1, 0.1) });
+        page.drawText(line, { x: x0 + PAD, y: ty, size: SIZE - 0.3, font: bold, color: rgb(0.75, 0.05, 0.05) });
         ty -= LEAD;
       }
 
-      let cy = y - 8;
+      let cy = y - PAD - SIZE;
       for (const line of cell.classLines) {
-        page.drawText(line, { x: x0 + cw[0] + 3, y: cy, size: SIZE, font, color: rgb(0.35, 0.35, 0.35) });
+        page.drawText(line, { x: x0 + cw[0] + PAD, y: cy, size: SIZE, font, color: rgb(0.3, 0.3, 0.3) });
         cy -= LEAD;
       }
 
-      let my = y - 8;
+      let my = y - PAD - SIZE;
       for (const line of cell.mealLines) {
-        page.drawText(line, { x: x0 + cw[0] + cw[1] + 3, y: my, size: SIZE, font });
+        page.drawText(line, { x: x0 + cw[0] + cw[1] + PAD, y: my, size: SIZE, font });
         my -= LEAD;
       }
     });
 
-    y -= rowH;
+    y -= h;
   }
 
   const bytes = await pdf.save();
