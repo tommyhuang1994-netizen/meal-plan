@@ -13,7 +13,7 @@ import { MENU_BY_DATE } from '../lib/menuData.js';
 import { CHEFS_PRICING, MENU_PRICING } from '../lib/pricingData.js';
 import { CALENDAR_GROUPS, getBlockedDaysList } from '../lib/schoolCalendar.js';
 import { PARENT_CHILDREN } from '../lib/orderStore.js';
-import { STUDENTS, UNATTRIBUTED_ALLERGIES } from '../lib/students.js';
+import { STUDENTS, ALLERGY_DECLARATIONS } from '../lib/students.js';
 import { hashPassword } from '../lib/password.js';
 
 // Seeding writes schema-owned rows, so use the direct (unpooled) connection.
@@ -214,7 +214,8 @@ async function seedStudents(parent) {
 /// are seeded as unresolved so the warning stays visible until an admin can
 /// match it to a child.
 async function seedAllergyDeclarations() {
-  for (const d of UNATTRIBUTED_ALLERGIES) {
+  let resolved = 0;
+  for (const d of ALLERGY_DECLARATIONS) {
     // "21/08/2026 11:38:57" — day/month/year, local time.
     const [date, time] = d.submitted.split(' ');
     const [dd, mm, yyyy] = date.split('/').map(Number);
@@ -222,17 +223,27 @@ async function seedAllergyDeclarations() {
     const submittedAt = new Date(yyyy, mm - 1, dd, hh, mi, ss);
 
     const found = await prisma.allergyDeclaration.findFirst({ where: { submittedAt } });
+    // A resolved declaration points at the student it belongs to, so the
+    // evidence for the match survives in the database.
+    const student = d.resolvedTo
+      ? await prisma.student.findFirst({ where: { name: d.resolvedTo } })
+      : null;
+    if (d.resolvedTo && !student) throw new Error(`resolvedTo names no student: ${d.resolvedTo}`);
+    if (student) resolved++;
+
     const data = {
       submittedAt,
       classGroup: GROUP[d.dept],
       year: d.year,
       allergies: d.allergies ?? [],
       note: d.note,
+      resolvedStudentId: student?.id ?? null,
+      resolvedAt: student ? new Date() : null,
     };
     if (found) await prisma.allergyDeclaration.update({ where: { id: found.id }, data });
     else await prisma.allergyDeclaration.create({ data });
   }
-  console.log(`  AllergyDecl    ${UNATTRIBUTED_ALLERGIES.length}`);
+  console.log(`  AllergyDecl    ${ALLERGY_DECLARATIONS.length} (${resolved} resolved)`);
 }
 
 /// Which meals each group may order. The order form states "Zera PLUS students
