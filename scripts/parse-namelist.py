@@ -60,7 +60,12 @@ for side, geo in SIDES.items():
         rows.append(dict(page=pg, y=dy, side=side, name=name,
                          group=group.title() if group else '', year=year, dish=dish))
 
-rows = [r for r in rows if r['name'] and r['name'].lower() != 'name']
+# Header rows carry no person. A row with a dish but NO name is a different
+# thing entirely and must not be dropped: on the 14 September sheet two such
+# rows were a real student whose name is missing from the PDF's text layer, and
+# discarding them quietly left a child with an egg allergy off the sheet.
+rows = [r for r in rows if r['name'].lower() != 'name']
+unnamed = [r for r in rows if not r['name']]
 rows.sort(key=lambda r: (r["side"], r["page"], r["y"]))
 
 bf = [r for r in rows if r['side'] == 'breakfast']
@@ -83,6 +88,14 @@ for side, grp in (('breakfast', bf), ('lunch', ln)):
     print(f'  {side}:')
     for d, c in sorted(tally.items(), key=lambda p: -p[1]):
         print(f'     {c:>3}  {d}')
+
+if unnamed:
+    print(f'\n!! {len(unnamed)} row(s) carry a dish but NO NAME in the PDF text layer.')
+    print('   These are real people. Identify each and add it to UNNAMED_OVERRIDES')
+    print('   in scripts/generate-real-orders.mjs, which refuses to run until every')
+    print('   one is accounted for.')
+    for r in unnamed:
+        print(f"   {r['side']:<9} {r['group']} {r['year']:<8} {r['dish'][:44]}")
 
 json.dump(rows, open('/tmp/namelist14.json', 'w'), indent=1)
 print('\nwrote /tmp/namelist14.json')

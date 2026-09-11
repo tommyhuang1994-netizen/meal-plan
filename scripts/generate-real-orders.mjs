@@ -37,6 +37,41 @@ function resolve(label, slot) {
 
 const YEAR_FIX = { PLUS: 'Cambridge Plus' };
 
+// Rows whose name is missing from the PDF's text layer, resolved by hand.
+//
+// The 14 September sheet has two: a Cambridge Year 3 breakfast and a Cambridge
+// Year 3 lunch. Peter John A. Pizon is the only Year 3 student on the roster
+// absent from that sheet, and adding him to each column gives exactly the 42
+// breakfast / 51 lunch the school counts — so the identification is by
+// elimination, not from the file.
+//
+// Keyed `side|group|year`, which is all the sheet gives for such a row.
+const UNNAMED_OVERRIDES = {
+  '2026-09-14': {
+    'breakfast|Cambridge|Year 3': 'Peter John A. Pizon',
+    'lunch|Cambridge|Year 3': 'Peter John A. Pizon',
+  },
+};
+
+// Resolve the nameless rows before anything else, and stop if any is unknown.
+// Dropping them is what left a child with an egg allergy off the sheet.
+const overrides = UNNAMED_OVERRIDES[iso] ?? {};
+const unresolved = [];
+for (const r of rows) {
+  if (r.name) continue;
+  const key = `${r.side}|${r.group}|${r.year}`;
+  const name = overrides[key];
+  if (!name) { unresolved.push(`${key}  (${r.dish})`); continue; }
+  r.name = name;
+}
+if (unresolved.length) {
+  console.error(`${unresolved.length} row(s) have no name and no override for ${iso}:`);
+  for (const u of unresolved) console.error('  ' + u);
+  console.error('Add them to UNNAMED_OVERRIDES in this script. Refusing to write a');
+  console.error('sheet that silently omits someone.');
+  process.exit(1);
+}
+
 const byPerson = new Map();
 const problems = [];
 for (const r of rows) {
