@@ -83,11 +83,25 @@ function classLabel(o) {
   return label.toUpperCase();
 }
 
+/// The chip and the parent's own wording, minus the duplication.
+///
+/// Both are shown because the wording often carries detail no chip has —
+/// "Broad Bean (G6PD)", "Too much egg", "Egg White and potato". But when the
+/// note just restates the chip it reads as "! Peanuts, peanuts", so a note that
+/// adds nothing is dropped. Case and plurals differ, hence the loose compare.
 function allergyText(o) {
   const chips = (o.allergies ?? []).map(a => ALLERGY_LABELS[a]?.en).filter(Boolean);
   const note = ascii(o.note);
   if (!chips.length && !note) return '';
-  return `! ${[...new Set([...chips, note])].filter(Boolean).join(', ')}`;
+
+  // Equality only. A substring test looks tidier and is wrong: "Egg White and
+  // potato" CONTAINS "egg", so it would be dropped as a duplicate of the Eggs
+  // chip and the potato allergy would vanish off the kitchen's sheet.
+  const loose = (s) => s.toLowerCase().replace(/[^a-z]/g, '').replace(/s$/, '');
+  const redundant = note && chips.some(c => loose(c) === loose(note));
+
+  const parts = redundant ? chips : [...chips, note];
+  return `! ${parts.filter(Boolean).join(', ')}`;
 }
 
 export async function GET(request, { params }) {
@@ -103,6 +117,12 @@ export async function GET(request, { params }) {
 
   const all = await ordersForDate(monthKey, date);
   const rows = dept === 'All' ? all : all.filter(o => o.dept === dept);
+
+  // Only dates loaded from a real name list carry real meals; every other date
+  // is still generated stand-in data. The dashboard badges this, and the PDF
+  // has to as well — a printed sheet looks authoritative, gets carried into a
+  // kitchen, and nothing on the page would otherwise say the meals are invented.
+  const isSample = rows.length > 0 && rows.every(o => o.source === 'sample');
 
   const dateObj = new Date(meta.year, meta.month, date);
   const isFriday = dateObj.getDay() === 5;
@@ -201,6 +221,19 @@ export async function GET(request, { params }) {
     });
     y -= titleH;
 
+    // On every page, not just the first: pages get separated.
+    if (isSample) {
+      const warnH = 13;
+      page.drawRectangle({
+        x: leftEdge, y: y - warnH, width: groupW * 2 + gap, height: warnH,
+        color: rgb(0.99, 0.91, 0.91), borderWidth: 0.6, borderColor: rgb(0.7, 0.1, 0.1),
+      });
+      page.drawText('SAMPLE DATA - these meals are not real orders. Do not use for service.', {
+        x: leftEdge + PAD + 1, y: y - warnH + 4, size: 7.5, font: bold, color: rgb(0.6, 0.06, 0.06),
+      });
+      y -= warnH + 2;
+    }
+
     groups.forEach((g, gi) => {
       const x0 = groupX(gi);
       ['Name', 'Class', g.label].forEach((h, hi) => {
@@ -283,7 +316,9 @@ export async function GET(request, { params }) {
   }
 
   const bytes = await pdf.save();
-  const filename = `${title.replace(/[^\w -]/g, '')}.pdf`;
+  // A downloaded file keeps the warning in its name too, so a sample sheet is
+  // identifiable after it has left the browser.
+  const filename = `${isSample ? 'SAMPLE - ' : ''}${title.replace(/[^\w -]/g, '')}.pdf`;
   return new Response(Buffer.from(bytes), {
     headers: {
       'content-type': 'application/pdf',
