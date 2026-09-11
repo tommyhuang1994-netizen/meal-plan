@@ -36,6 +36,8 @@ export async function GET(request) {
       return NextResponse.json({ rows: await daysInMonth(month) });
     }
     if (searchParams.get('summary')) {
+      // No `students` means every student: the admin view. A parent request
+      // must always name its children.
       const names = (searchParams.get('students') ?? '').split(',').filter(Boolean);
       return NextResponse.json({ orders: await studentOrders(names) });
     }

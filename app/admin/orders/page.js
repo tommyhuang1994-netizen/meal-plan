@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { monthLabel, CHEF_CHOICE, MONTHS, DEFAULT_MONTH } from '../../../lib/orderStore';
 import {
-  getParentOrders, getParentOrderDetail, cancelParentOrder,
-  monthLabel, CHEF_CHOICE,
-} from '../../../lib/orderStore';
+  fetchOrderSummaries, fetchStudentDays, cancelOrderRequest,
+} from '../../../lib/orderStore.db';
 import { useT, fmtDateInMonth } from '../../../lib/i18n';
 import { isDateLocked } from '../../../lib/cutoff';
 import { AllergyTags, UnattributedWarning } from '../../AllergyTags';
@@ -28,27 +28,56 @@ export default function AdminOrdersPage() {
     if (sessionStorage.getItem('admin_auth') !== 'true') router.replace('/admin');
   }, []);
 
-  // Orders live in localStorage, so they can only be read after mount.
+  // Orders come from Postgres, so they arrive after mount. Admin sees every
+  // student's order, not just the ones placed in this browser.
+  const [monthKey, setMonthKey] = useState(DEFAULT_MONTH);
   const [orders,  setOrders]  = useState([]);
+  const [loading, setLoading] = useState(true);
   const [openId,  setOpenId]  = useState(null);
   const [detail,  setDetail]  = useState([]);
-  const [confirm, setConfirm] = useState(null);   // receipt pending cancellation
+  const [confirm, setConfirm] = useState(null);   // order pending cancellation
   const [notice,  setNotice]  = useState(null);
 
-  const reload = () => setOrders(getParentOrders());
-  useEffect(() => { reload(); }, []);
+  const reload = (key = monthKey) => {
+    setLoading(true);
+    return fetchOrderSummaries(key)
+      .then(list => setOrders(list.filter(o => o.monthKey === key)))
+      .catch(err => { console.error(err); setOrders([]); })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    fetchOrderSummaries(monthKey)
+      .then(list => { if (live) setOrders(list.filter(o => o.monthKey === monthKey)); })
+      .catch(err => { console.error(err); if (live) setOrders([]); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [monthKey]);
+
   useEffect(() => {
     if (!openId) { setDetail([]); return; }
     const o = orders.find(x => x.id === openId);
-    setDetail(o ? getParentOrderDetail(o.studentName, o.monthKey) : []);
+    if (!o) { setDetail([]); return; }
+    let live = true;
+    fetchStudentDays(o.studentName, o.monthKey)
+      .then(rows => { if (live) setDetail(rows); })
+      .catch(err => { console.error(err); if (live) setDetail([]); });
+    return () => { live = false; };
   }, [openId, orders]);
 
-  function doCancel(o) {
-    const removed = cancelParentOrder(o.studentName, o.monthKey);
-    setConfirm(null);
-    setOpenId(null);
-    reload();
-    setNotice(t('adminOrders.cancelled', { name: o.studentName, n: removed }));
+  async function doCancel(o) {
+    try {
+      const res = await cancelOrderRequest(o.studentName, o.monthKey, 'cancelled by admin');
+      setConfirm(null);
+      setOpenId(null);
+      await reload();
+      setNotice(t('adminOrders.cancelled', { name: o.studentName, n: res.removed ?? 0 }));
+    } catch (err) {
+      console.error(err);
+      setNotice(t('adminOrders.cancelFailed'));
+    }
     setTimeout(() => setNotice(null), 4000);
   }
 
