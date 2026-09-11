@@ -246,20 +246,20 @@ async function seedAllergyDeclarations() {
   console.log(`  AllergyDecl    ${ALLERGY_DECLARATIONS.length} (${resolved} resolved)`);
 }
 
-/// Which meals each group may order. The order form states "Zera PLUS students
-/// are eligible for Breakfast only"; nothing in the app enforced it, so it is
-/// recorded here first and can be enforced against real data.
+/// Which meals each group may order. Every group may take every meal: the
+/// form's Breakfast-only line for PLUS is out of date, and enforcing it would
+/// have blocked orders the kitchen actually served.
 async function seedClassGroupRules() {
   const ALL = ['BREAKFAST', 'LUNCH', 'BRUNCH'];
   const rules = [
     { classGroup: 'CAMBRIDGE', allowedMeals: ALL, note: null },
     { classGroup: 'HOMESCHOOL', allowedMeals: ALL, note: null },
     { classGroup: 'STAFF', allowedMeals: ALL, note: null },
-    {
-      classGroup: 'PLUS',
-      allowedMeals: ['BREAKFAST'],
-      note: 'Order form: "Zera PLUS students are eligible for Breakfast only."',
-    },
+    // The order form still says "Zera PLUS students are eligible for Breakfast
+    // only", but the school confirms that is out of date and its own 14
+    // September service sheet has a Plus student taking lunch (ong shi chen).
+    // The sheet is the record of what was actually served, so it wins.
+    { classGroup: 'PLUS', allowedMeals: ALL, note: null },
   ];
   for (const r of rules) {
     await prisma.classGroupRule.upsert({
